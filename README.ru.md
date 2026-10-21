@@ -159,6 +159,7 @@ PORT=3000 node src/index.js
 - `HOST` – хост (0.0.0.0 для доступа с других машин)
 - `CHAGOURTEE_DB_PATH` – путь к файлу SQLite (по умолчанию `./data/chagourtee.db`)
 - `CHAGOURTEE_SESSION_SECRET` – секрет для cookie (обязательно смените)
+- `CHAGOURTEE_COOKIE_SECURE` – флаг `Secure` для cookie сессии: `auto` (по умолчанию, включается только при HTTPS), `true` или `false`. Для работы по HTTP (например, `http://192.168.0.13:4173`) оставьте `auto` или укажите `false`
 - `CHAGOURTEE_BOOTSTRAP_SECRET` – секрет для создания первого владельца (см. выше)
 - `CHAGOURTEE_MAX_FILE_SIZE` – максимальный размер файла для загрузки в байтах (по умолчанию 52428800 = 50MB)
 - `CHAGOURTEE_MEDIA_ENCRYPTION_KEY` – ключ шифрования для медиафайлов (32 байта для AES-256)

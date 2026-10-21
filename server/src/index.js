@@ -7,7 +7,7 @@ const cookie = require('@fastify/cookie');
 const { getDb } = require('./db');
 const { hashPassword, verifyPassword, SESSION_TTL_MS, createSessionId } = require('./auth');
 const authPlugin = require('./auth').plugin;
-const { authRoutes, addAuthUtils } = require('./auth');
+const { authRoutes, addAuthUtils, getSessionCookieOptions } = require('./auth');
 const { logger } = require('../logger');
 
 const SESSION_COOKIE = 'chagourtee_sid';
@@ -234,11 +234,8 @@ async function run() {
     
     // Set session cookie
     reply.setCookie(SESSION_COOKIE, sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      ...getSessionCookieOptions(request),
       maxAge: Math.floor(SESSION_TTL_MS / 1000), // in seconds
-      path: '/',
-      sameSite: 'strict',
     });
 
     const user = server.getUser(userId);

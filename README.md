@@ -159,6 +159,7 @@ Recommended environment variables (or `.env` file in `server/`):
 - `HOST` – host (0.0.0.0 for access from other machines)
 - `CHAGOURTEE_DB_PATH` – SQLite file path (default `./data/chagourtee.db`)
 - `CHAGOURTEE_SESSION_SECRET` – secret for cookies (must be changed)
+- `CHAGOURTEE_COOKIE_SECURE` – `Secure` flag for the session cookie: `auto` (default, enabled only over HTTPS), `true` or `false`. For plain HTTP deployments (e.g. `http://192.168.0.13:4173`) keep `auto` or set `false`
 - `CHAGOURTEE_BOOTSTRAP_SECRET` – secret for creating the first owner (see above)
 - `CHAGOURTEE_MAX_FILE_SIZE` – maximum file size for upload in bytes (default 52428800 = 50MB)
 - `CHAGOURTEE_MEDIA_ENCRYPTION_KEY` – encryption key for media files (32 bytes for AES-256)

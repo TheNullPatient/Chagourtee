@@ -21,6 +21,41 @@ function isOwnerOrModerator(role) {
   return role === 'owner' || role === 'moderator';
 }
 
+/**
+ * Cookie options for the session cookie.
+ *
+ * `secure` must only be enabled when the app is actually served over HTTPS.
+ * Browsers silently drop `Secure` cookies received over plain HTTP, except on
+ * localhost (which is treated as a trustworthy origin). That is why a build
+ * running in production mode over a LAN IP (http://192.168.x.x) could log in
+ * successfully but then look unauthenticated on every request.
+ *
+ * By default the flag is derived from the request protocol (including
+ * X-Forwarded-Proto for reverse proxies). Set CHAGOURTEE_COOKIE_SECURE=true/false
+ * to override it explicitly.
+ */
+function isSecureRequest(request) {
+  const explicit = String(process.env.CHAGOURTEE_COOKIE_SECURE || '').trim().toLowerCase();
+  if (explicit === 'true') return true;
+  if (explicit === 'false') return false;
+
+  const forwardedProto = String(request?.headers?.['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+
+  return request?.protocol === 'https' || forwardedProto === 'https';
+}
+
+function getSessionCookieOptions(request) {
+  return {
+    httpOnly: true,
+    secure: isSecureRequest(request),
+    path: '/',
+    sameSite: 'strict',
+  };
+}
+
 function requireAuth(fastify, _opts, done) {
   fastify.decorate('requireAuth', async function (request, reply) {
     if (!request.session?.userId) {
@@ -115,11 +150,8 @@ function authRoutes(fastify, _opts, done) {
     
     // Set session cookie
     reply.setCookie(SESSION_COOKIE, sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      ...getSessionCookieOptions(request),
       maxAge: Math.floor(SESSION_TTL_MS / 1000), // in seconds
-      path: '/',
-      sameSite: 'strict',
     });
     
     return { user: { id: user.id, login: user.login, role: user.role, verified: Boolean(user.verified) } };
@@ -132,12 +164,7 @@ function authRoutes(fastify, _opts, done) {
       db.prepare('DELETE FROM sessions WHERE id = ?').run(request.session.sessionId);
     }
     request.session = null;
-    reply.clearCookie(SESSION_COOKIE, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      sameSite: 'strict',
-    });
+    reply.clearCookie(SESSION_COOKIE, getSessionCookieOptions(request));
     return { ok: true };
   });
 
@@ -150,6 +177,7 @@ module.exports = {
   plugin: fp(requireAuth), 
   authRoutes,
   addAuthUtils,
+  getSessionCookieOptions,
   hashPassword,
   verifyPassword,
   createSessionId,
