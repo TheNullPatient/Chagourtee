@@ -26,12 +26,8 @@ import { saveAs } from 'file-saver';
 import { TabletBottomNav } from '../components/TabletBottomNav';
 import { IconHome, IconUsers } from '../components/icons/Icons';
 
-// Extend the HTMLInputElement interface to include webkitdirectory
+// Global type extensions used by the drag-and-drop folder handling below
 declare global {
-  interface HTMLInputElement {
-    webkitdirectory: boolean;
-  }
-  
   interface FileSystemEntry {
     readonly isFile: boolean;
     readonly isDirectory: boolean;
@@ -2633,7 +2629,6 @@ export default function Chat() {
                         id="file-upload"
                         type="file"
                         multiple
-                        {...{ webkitdirectory: "true" }}
                         onChange={handleFileSelect}
                         className="visually-hidden-input"
                       />
@@ -2662,7 +2657,6 @@ export default function Chat() {
                   id="edit-file-upload"
                   type="file"
                   multiple
-                  {...{ webkitdirectory: "true" }}
                   disabled={!isUploadEnabled || isStorageFull}
                   onChange={(e) => {
                     if (e.target.files && e.target.files.length > 0) {
