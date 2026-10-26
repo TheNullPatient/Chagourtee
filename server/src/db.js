@@ -132,7 +132,6 @@ function createDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id);
     CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(room_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_messages_updated_at ON messages(updated_at);
     CREATE INDEX IF NOT EXISTS idx_message_reads_user_id ON message_reads(user_id);
     CREATE INDEX IF NOT EXISTS idx_media_files_message_id ON media_files(message_id);
     CREATE INDEX IF NOT EXISTS idx_media_files_uploaded_by ON media_files(uploaded_by);
@@ -216,6 +215,12 @@ function createDb(dbPath) {
     if (!messageColumns.includes('media_position')) {
       db.exec('ALTER TABLE messages ADD COLUMN media_position TEXT');
     }
+    if (!messageColumns.includes('updated_at')) {
+      db.exec('ALTER TABLE messages ADD COLUMN updated_at DATETIME DEFAULT NULL');
+    }
+
+    // This index depends on updated_at, which old databases may not have yet.
+    db.exec('CREATE INDEX IF NOT EXISTS idx_messages_updated_at ON messages(updated_at)');
   } catch (e) {
     console.error('Failed to ensure messages schema is up to date:', e);
   }
