@@ -1,4 +1,5 @@
 const { verifyPassword, hashPassword } = require('./auth');
+const { deleteUserData } = require('./dataCleanup');
 const crypto = require('crypto');
 
 module.exports = function (fastify) {
@@ -26,11 +27,9 @@ module.exports = function (fastify) {
     // Создаем новую запись
     db.prepare('INSERT INTO verification_settings (enabled) VALUES (?)').run(enabled ? 1 : 0);
 
-    const settings = { enabled };
-
     // Реалтайм: уведомляем всех о смене настроек верификации
     if (fastify.broadcastVerificationSettingsUpdated) {
-      fastify.broadcastVerificationSettingsUpdated(settings);
+      fastify.broadcastVerificationSettingsUpdated(enabled);
     }
 
     return { ok: true, enabled };
@@ -126,14 +125,19 @@ module.exports = function (fastify) {
     if (!target) return reply.code(404).send({ error: 'User not found' });
     if (target.role === 'owner') return reply.code(403).send({ error: 'Cannot reject owner' });
     
+    try {
+      deleteUserData(db, Number(userId), fastify.log);
+    } catch (error) {
+      fastify.log.error(`Failed to reject user ${userId}:`, error);
+      return reply.code(500).send({ error: 'Failed to reject user' });
+    }
+
     // Broadcast user rejection to the user
     fastify.broadcastToUser(Number(userId), {
       type: 'user_rejected',
       userId: Number(userId),
       message: 'Your account has been rejected by an administrator.'
     });
-    
-    db.prepare('DELETE FROM users WHERE id = ?').run(Number(userId));
 
     // Реалтайм: список пользователей изменился
     if (fastify.broadcastAll) {

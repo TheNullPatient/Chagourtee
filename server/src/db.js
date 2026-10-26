@@ -19,6 +19,15 @@ function createDb(dbPath) {
   ensureDataDir(dbPath);
   const db = new Database(dbPath);
 
+  // SQLite disables foreign key enforcement by default, which silently
+  // disabled every ON DELETE CASCADE declared below.
+  db.pragma('foreign_keys = ON');
+
+  const foreignKeysEnabled = db.pragma('foreign_keys', { simple: true });
+  if (foreignKeysEnabled !== 1) {
+    console.error('Failed to enable SQLite foreign key enforcement');
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,6 +218,20 @@ function createDb(dbPath) {
     }
   } catch (e) {
     console.error('Failed to ensure messages schema is up to date:', e);
+  }
+
+  // Foreign keys were not enforced before this version, so old databases may
+  // contain orphan rows. Report them instead of deleting data automatically.
+  try {
+    const violations = db.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length > 0) {
+      console.warn(
+        `[db] Found ${violations.length} foreign key violation(s) left over from previous versions. ` +
+          `Run the cleanup migration or remove the orphan rows manually.`
+      );
+    }
+  } catch (e) {
+    console.error('Failed to run foreign key check:', e);
   }
 
   return db;

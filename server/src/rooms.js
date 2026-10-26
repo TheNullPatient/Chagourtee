@@ -1,3 +1,5 @@
+const { deleteRoomData, clearRoomMessages } = require('./dataCleanup');
+
 module.exports = function (fastify) {
   const db = fastify.db;
 
@@ -136,7 +138,13 @@ module.exports = function (fastify) {
     // Get the room before deletion to broadcast the event
     const roomToDelete = roomToCheck;
     
-    const r = db.prepare('DELETE FROM rooms WHERE id = ?').run(id);
+    let r;
+    try {
+      r = deleteRoomData(db, id, fastify.log);
+    } catch (error) {
+      fastify.log.error(`Failed to delete room ${id}:`, error);
+      return reply.code(500).send({ error: 'Failed to delete room' });
+    }
     if (r.changes === 0) return reply.code(404).send({ error: 'Room not found' });
     
     // Broadcast room deletion to all connected clients
@@ -158,7 +166,13 @@ module.exports = function (fastify) {
     if (!room) return reply.code(404).send({ error: 'Room not found' });
     
     // Delete all messages in the room
-    const r = db.prepare('DELETE FROM messages WHERE room_id = ?').run(id);
+    let r;
+    try {
+      r = clearRoomMessages(db, id, fastify.log);
+    } catch (error) {
+      fastify.log.error(`Failed to clear messages in room ${id}:`, error);
+      return reply.code(500).send({ error: 'Failed to clear messages' });
+    }
 
     // Реалтайм: уведомляем всех клиентов в комнате, что сообщения очищены
     if (fastify.broadcastRoomMessagesCleared) {

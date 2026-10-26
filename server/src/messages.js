@@ -1,4 +1,5 @@
 const { isOwnerOrModerator } = require('./auth');
+const { collectMediaForMessages, removeMediaFiles } = require('./dataCleanup');
 
 // Rate limiting store - keeps track of user message counts
 const rateLimitStore = new Map(); // userId -> { count: number, timestamp: number }
@@ -557,15 +558,31 @@ module.exports = function (fastify) {
     const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
 
+    const uniqueMessageIds = [...new Set(messageIds.map(Number).filter(Number.isInteger))];
+    if (uniqueMessageIds.length === 0) {
+      return reply.code(400).send({ error: 'Array of valid message IDs required' });
+    }
+
     // Fetch messages to check permissions
-    const placeholders = messageIds.map(() => '?').join(',');
+    const placeholders = uniqueMessageIds.map(() => '?').join(',');
     const messagesQuery = db.prepare(`
       SELECT m.id, m.room_id, m.user_id, u.role
       FROM messages m
       JOIN users u ON u.id = m.user_id
       WHERE m.id IN (${placeholders}) AND m.room_id = ?
     `);
-    const messages = messagesQuery.all([...messageIds, roomId]);
+    const messages = messagesQuery.all([...uniqueMessageIds, roomId]);
+
+    // Reject the whole request if any ID is missing or belongs to another room.
+    // Otherwise a caller could pass foreign IDs and still trigger media cleanup.
+    if (messages.length !== uniqueMessageIds.length) {
+      const foundIds = new Set(messages.map((message) => message.id));
+      const missingIds = uniqueMessageIds.filter((id) => !foundIds.has(id));
+      return reply.code(404).send({
+        error: 'Some messages were not found in this room',
+        messageIds: missingIds,
+      });
+    }
 
     // Check permissions for each message
     const currentUser = fastify.getUser(request.session.userId);
@@ -578,51 +595,21 @@ module.exports = function (fastify) {
       }
     }
 
-    // Get media files that need to be cleaned up
-    const mediaFilesToDelete = db.prepare(`
-      SELECT mf.encrypted_filename, mf.transcoded_filename
-      FROM media_files mf
-      WHERE mf.message_id IN (${placeholders})
-    `).all(messageIds);
+    // Get media files that need to be cleaned up (only for messages in this room)
+    const mediaFilesToDelete = collectMediaForMessages(db, uniqueMessageIds);
 
     // Delete the messages using proper parameter binding
     try {
       const deleteQuery = `DELETE FROM messages WHERE id IN (${placeholders}) AND room_id = ?`;
       const deleteStmt = db.prepare(deleteQuery);
-      const result = deleteStmt.run([...messageIds, roomId]); // Pass array of values to bind to placeholders
-      
+      const result = deleteStmt.run([...uniqueMessageIds, roomId]);
+
       // Delete actual media files from filesystem
-      for (const mediaFile of mediaFilesToDelete) {
-        const baseDir = require('path').join(__dirname, '../data/media');
-        const fs = require('fs');
+      removeMediaFiles(mediaFilesToDelete, fastify.log);
 
-        const originalPath = require('path').join(baseDir, mediaFile.encrypted_filename);
-        if (fs.existsSync(originalPath)) {
-          try {
-            fs.unlinkSync(originalPath);
-          } catch (e) {
-            fastify.log.error(`Failed to delete media file ${originalPath}:`, e);
-          }
-        }
-
-        if (mediaFile.transcoded_filename) {
-          const transcodedPath = require('path').join(baseDir, mediaFile.transcoded_filename);
-          if (fs.existsSync(transcodedPath)) {
-            try {
-              fs.unlinkSync(transcodedPath);
-            } catch (e) {
-              fastify.log.error(
-                `Failed to delete transcoded media file ${transcodedPath}:`,
-                e
-              );
-            }
-          }
-        }
-      }
-      
       // Broadcast deletion to all room participants
       if (fastify.broadcastRoom) {
-        fastify.broadcastRoom(roomId, { type: 'messages_deleted', messageIds });
+        fastify.broadcastRoom(roomId, { type: 'messages_deleted', messageIds: uniqueMessageIds });
       }
 
       return { ok: true, count: result.changes };

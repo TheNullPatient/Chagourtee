@@ -1,3 +1,5 @@
+const { deleteUserData } = require('./dataCleanup');
+
 module.exports = function (fastify) {
   const db = fastify.db;
 
@@ -55,10 +57,7 @@ module.exports = function (fastify) {
 
     // Реалтайм: уведомляем клиентов об изменении роли пользователя
     if (fastify.broadcastUserRoleChanged) {
-      const updatedUser = db.prepare('SELECT id, login, role, verified, created_at FROM users WHERE id = ?').get(userId);
-      if (updatedUser) {
-        fastify.broadcastUserRoleChanged(updatedUser);
-      }
+      fastify.broadcastUserRoleChanged(userId, role);
     }
 
     return { ok: true };
@@ -78,6 +77,13 @@ module.exports = function (fastify) {
       return reply.code(403).send({ error: 'Cannot delete yourself' });
     }
     
+    try {
+      deleteUserData(db, userId, fastify.log);
+    } catch (error) {
+      fastify.log.error(`Failed to delete user ${userId}:`, error);
+      return reply.code(500).send({ error: 'Failed to delete user' });
+    }
+
     // Broadcast user deletion to all connected clients for this user
     const wsServer = fastify.ws.wss;
     if (wsServer) {
@@ -95,12 +101,6 @@ module.exports = function (fastify) {
         }
       });
     }
-    
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
-    db.prepare('DELETE FROM messages WHERE user_id = ?').run(userId);
-    db.prepare('DELETE FROM invites WHERE created_by = ?').run(userId);
-    db.prepare('DELETE FROM rooms WHERE created_by = ?').run(userId);
-    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 
     // Реалтайм: уведомляем админку/клиентов об изменении списка пользователей
     if (fastify.broadcastAll) {
