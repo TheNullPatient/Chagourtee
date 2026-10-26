@@ -53,7 +53,7 @@ export const useMessageInputBehavior = ({
         handleSend(e);
       }
     }
-  }, [sendText, setSendText, handleSend, saveEditedMessage, isEditing, isMobileDevice]);
+  }, [sendText, setSendText, handleSend, saveEditedMessage, isEditing, isMobileDevice, editingText, setEditingText]);
 
   return {
     handleKeyDown,

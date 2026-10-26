@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 interface ToastProps {
   message: string;
@@ -11,23 +11,28 @@ const Toast: React.FC<ToastProps> = ({ message, type, onClose, duration = 5000 }
   const [isVisible, setIsVisible] = useState(true);
   const [isExiting, setIsExiting] = useState(false);
 
+  // Keep the latest onClose without restarting the auto-hide timer whenever
+  // the parent re-renders and passes a new callback.
+  const onCloseRef = useRef(onClose);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      closeToast();
-    }, duration);
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  const closeToast = useCallback(() => {
+    setIsExiting(true);
+    setTimeout(() => {
+      setIsVisible(false);
+      onCloseRef.current();
+    }, 300); // Match the CSS transition duration
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(closeToast, duration);
 
     return () => {
       clearTimeout(timer);
     };
-  }, [duration]);
-
-  const closeToast = () => {
-    setIsExiting(true);
-    setTimeout(() => {
-      setIsVisible(false);
-      onClose();
-    }, 300); // Match the CSS transition duration
-  };
+  }, [closeToast, duration]);
 
   if (!isVisible) return null;
 

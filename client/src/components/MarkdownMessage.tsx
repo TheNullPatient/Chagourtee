@@ -37,7 +37,6 @@ const MarkdownMessage: React.FC<MarkdownMessageProps> = React.memo(
 
     useEffect(() => {
       if (!media || media.length === 0) {
-        setMissingMediaIds(new Set());
         return;
       }
 
@@ -99,7 +98,6 @@ const MarkdownMessage: React.FC<MarkdownMessageProps> = React.memo(
     };
     const markdownElement = (
       <ReactMarkdown
-        children={content}
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeSanitize, rehypeKatex]}
         components={{
@@ -162,7 +160,9 @@ const MarkdownMessage: React.FC<MarkdownMessageProps> = React.memo(
           div: ({ node, ...props }) => <div className="md-div" {...props} />,
           span: ({ node, ...props }) => <span className="md-span" {...props} />
         }}
-      />
+      >
+        {content}
+      </ReactMarkdown>
     );
 
     const mediaElement =

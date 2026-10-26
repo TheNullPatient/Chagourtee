@@ -1,32 +1,14 @@
-import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/Images/Chagourtee_512px.png';
 import { helpLinks } from '../constants/help';
 import { IconAlertTriangle } from '../components/icons/Icons';
-import { clearRedirectFlag } from '../api';
-
-const CONNECTION_ERROR_KEY = 'chagourtee_connection_error';
+import { clearRedirectFlag, consumeConnectionError } from '../api';
 
 export type ConnectionErrorReason = 'network_unreachable' | 'server_unavailable' | 'timeout' | 'api_error' | 'websocket_error';
 
 export default function ConnectionError() {
   const navigate = useNavigate();
-  const [reason, setReason] = useState<ConnectionErrorReason | null>(null);
-  const [errorDetails, setErrorDetails] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      const stored = sessionStorage.getItem(CONNECTION_ERROR_KEY);
-      if (stored) {
-        const data = JSON.parse(stored);
-        setReason(data.reason);
-        setErrorDetails(data.details || null);
-        sessionStorage.removeItem(CONNECTION_ERROR_KEY);
-      }
-    } catch {
-      setReason(null);
-    }
-  }, []);
+  const { reason, details: errorDetails } = consumeConnectionError();
 
   const handleRetry = () => {
     clearRedirectFlag();

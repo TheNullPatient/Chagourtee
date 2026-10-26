@@ -48,6 +48,41 @@ export function clearRedirectFlag(): void {
   }
 }
 
+export type StoredConnectionError = {
+  reason: ConnectionErrorReason | null;
+  details: string | null;
+};
+
+// Remembers the consumed error so repeated reads (e.g. React StrictMode
+// re-rendering the page) still see the same values after the storage entry
+// has been removed.
+let cachedConnectionError: StoredConnectionError | null = null;
+
+/**
+ * Read and clear the connection error recorded by redirectToConnectionError().
+ */
+export function consumeConnectionError(): StoredConnectionError {
+  if (cachedConnectionError) return cachedConnectionError;
+
+  let result: StoredConnectionError = { reason: null, details: null };
+  try {
+    const stored = sessionStorage.getItem(CONNECTION_ERROR_KEY);
+    if (stored) {
+      const data = JSON.parse(stored);
+      result = {
+        reason: typeof data?.reason === 'string' ? data.reason : null,
+        details: typeof data?.details === 'string' && data.details ? data.details : null,
+      };
+      sessionStorage.removeItem(CONNECTION_ERROR_KEY);
+    }
+  } catch {
+    result = { reason: null, details: null };
+  }
+
+  cachedConnectionError = result;
+  return result;
+}
+
 /**
  * Check if an error is a network-level error (not HTTP error)
  */

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -22,12 +22,6 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
   variant = 'danger'
 }) => {
   const [isClosing, setIsClosing] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) {
-      setIsClosing(false);
-    }
-  }, [isOpen]);
 
   const handleClose = () => {
     if (isClosing) return;

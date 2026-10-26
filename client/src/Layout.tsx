@@ -16,7 +16,7 @@ function LayoutInner() {
   const { user } = useAuth();
   const location = useLocation();
   const params = useParams();
-  const [roomName, setRoomName] = useState<string | null>(null);
+  const [loadedRoom, setLoadedRoom] = useState<{ id: number; name: string | null } | null>(null);
   const { displayName, serverTagline } = useServerName();
   const { isOpen: isUserListOpen, open: openUserList } = useUserListPanel();
   const { chrome: settingsChrome } = useSettingsChrome();
@@ -27,6 +27,7 @@ function LayoutInner() {
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
 
   const isInSpecificRoom = location.pathname.startsWith('/chat/') && params.roomId;
+  const roomId = params.roomId ? Number(params.roomId) : null;
 
   useEffect(() => {
     const handleResize = () => {
@@ -42,19 +43,26 @@ function LayoutInner() {
   }, []);
 
   useEffect(() => {
-    const roomId = params.roomId ? Number(params.roomId) : null;
-    if (roomId) {
-      roomsApi
-        .list()
-        .then(({ rooms }) => {
-          const room = rooms.find((r) => r.id === roomId);
-          setRoomName(room?.name || null);
-        })
-        .catch(() => setRoomName(null));
-    } else {
-      setRoomName(null);
-    }
-  }, [params.roomId]);
+    if (!roomId) return;
+
+    let cancelled = false;
+    roomsApi
+      .list()
+      .then(({ rooms }) => {
+        if (cancelled) return;
+        const room = rooms.find((r) => r.id === roomId);
+        setLoadedRoom({ id: roomId, name: room?.name || null });
+      })
+      .catch(() => {
+        if (!cancelled) setLoadedRoom({ id: roomId, name: null });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId]);
+
+  const roomName = loadedRoom && loadedRoom.id === roomId ? loadedRoom.name : null;
 
   const getPageTitle = () => {
     if (location.pathname === '/settings' && settingsChrome) {

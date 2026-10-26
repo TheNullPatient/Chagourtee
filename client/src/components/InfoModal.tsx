@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 
 interface InfoModalProps {
   isOpen: boolean;
@@ -16,12 +16,6 @@ const InfoModal: React.FC<InfoModalProps> = ({
   closeText = 'Закрыть'
 }) => {
   const [isClosing, setIsClosing] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) {
-      setIsClosing(false);
-    }
-  }, [isOpen]);
 
   const handleClose = () => {
     setIsClosing(true);

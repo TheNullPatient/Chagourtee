@@ -1,17 +1,21 @@
-import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 
+function readDecodedParam(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export default function AccountRejected() {
-  const [message, setMessage] = useState<string | null>(null);
   const location = useLocation();
   const { logout } = useAuth();
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const messageParam = params.get('message');
-    setMessage(messageParam ? decodeURIComponent(messageParam) : 'Ваша заявка на верификацию была отклонена');
-  }, [location]);
+  const params = new URLSearchParams(location.search);
+  const message =
+    readDecodedParam(params.get('message')) || 'Ваша заявка на верификацию была отклонена';
 
   const handleGoToLogin = () => {
     logout();

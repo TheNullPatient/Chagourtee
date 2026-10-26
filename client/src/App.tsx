@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { Route, Navigate, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { ServerNameProvider } from './ServerNameContext';
@@ -27,27 +27,9 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 const PublicOnlyRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
-  const hasDecided = useRef<'unknown' | 'redirect' | 'show-form'>('unknown');
-  const renderDecision = useRef<'redirect' | 'show-form' | 'loading'>('loading');
 
-  if (hasDecided.current === 'unknown' && !loading) {
-    if (user) {
-      hasDecided.current = 'redirect';
-      renderDecision.current = 'redirect';
-    } else {
-      hasDecided.current = 'show-form';
-      renderDecision.current = 'show-form';
-    }
-  }
-
-  if (renderDecision.current === 'redirect') {
-    return <Navigate to="/" replace />;
-  }
-
-  if (renderDecision.current === 'loading') {
-    return <div className="app-loading-center">Загрузка…</div>;
-  }
-
+  if (loading) return <div className="app-loading-center">Загрузка…</div>;
+  if (user) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
 

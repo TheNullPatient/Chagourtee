@@ -45,7 +45,10 @@ export function ServerNameProvider({ children }: { children: React.ReactNode }) 
   };
 
   useEffect(() => {
-    void load();
+    const run = async () => {
+      await load();
+    };
+    void run();
   }, []);
 
   const displayName = `${rawName && rawName.trim().length > 0 ? rawName.trim() : DEFAULT_BASE_NAME}`;

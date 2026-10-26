@@ -1,17 +1,20 @@
-import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 
+function readDecodedParam(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export default function AccountDeleted() {
-  const [reason, setReason] = useState<string | null>(null);
   const location = useLocation();
   const { logout } = useAuth();
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const reasonParam = params.get('reason');
-    setReason(reasonParam ? decodeURIComponent(reasonParam) : 'Администратором');
-  }, [location]);
+  const params = new URLSearchParams(location.search);
+  const reason = readDecodedParam(params.get('reason')) || 'Администратором';
 
   const handleGoToLogin = () => {
     logout();
