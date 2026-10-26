@@ -551,6 +551,7 @@ async function mediaPlugin(fastify, options) {
             fastify.log.error('Failed to run orphan media cleanup:', e);
         }
     }, 60 * 1000);
+    orphanCleanupScheduler.unref();
 
     fastify.addHook('onClose', (_instance, done) => {
         clearInterval(orphanCleanupScheduler);

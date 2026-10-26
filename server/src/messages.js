@@ -7,7 +7,7 @@ const RATE_LIMIT_WINDOW = 10000; // 10 seconds window
 const MAX_MESSAGES_PER_WINDOW = 5; // Max 5 messages per window
 
 // Cleanup old rate limit entries periodically
-setInterval(() => {
+const rateLimitCleanup = setInterval(() => {
   const now = Date.now();
   for (const [userId, record] of rateLimitStore.entries()) {
     // If the record is older than 2 windows, remove it
@@ -16,6 +16,7 @@ setInterval(() => {
     }
   }
 }, 30000); // Clean up every 30 seconds
+rateLimitCleanup.unref();
 
 module.exports = function (fastify) {
   const db = fastify.db;
@@ -486,33 +487,7 @@ module.exports = function (fastify) {
     db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
 
     // Delete actual media files from filesystem
-    for (const mediaFile of mediaFiles) {
-      const baseDir = require('path').join(__dirname, '../data/media');
-      const fs = require('fs');
-
-      const originalPath = require('path').join(baseDir, mediaFile.encrypted_filename);
-      if (fs.existsSync(originalPath)) {
-        try {
-          fs.unlinkSync(originalPath);
-        } catch (e) {
-          fastify.log.error(`Failed to delete media file ${originalPath}:`, e);
-        }
-      }
-
-      if (mediaFile.transcoded_filename) {
-        const transcodedPath = require('path').join(baseDir, mediaFile.transcoded_filename);
-        if (fs.existsSync(transcodedPath)) {
-          try {
-            fs.unlinkSync(transcodedPath);
-          } catch (e) {
-            fastify.log.error(
-              `Failed to delete transcoded media file ${transcodedPath}:`,
-              e
-            );
-          }
-        }
-      }
-    }
+    removeMediaFiles(mediaFiles, fastify.log);
 
     if (process.env.DEBUG_MODE === 'true') {
       fastify.log.info(`About to broadcast message deletion for message ${messageId} in room ${roomId}`);

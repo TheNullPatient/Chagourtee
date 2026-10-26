@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const SESSION_COOKIE = 'chagourtee_sid';
-const MEDIA_DIR = path.join(__dirname, '../data/media');
+const { MEDIA_DIR } = require('./dataCleanup');
 
 // Rate limiting for WebSocket messages
 const wsRateLimitStore = new Map(); // userId -> { count: number, timestamp: number }
@@ -12,7 +12,7 @@ const WS_RATE_LIMIT_WINDOW = 5000; // 5 seconds window
 const WS_MAX_MESSAGES_PER_WINDOW = 10; // Max 10 messages per window
 
 // Cleanup old WebSocket rate limit entries periodically
-setInterval(() => {
+const wsRateLimitCleanup = setInterval(() => {
   const now = Date.now();
   for (const [userId, record] of wsRateLimitStore.entries()) {
     // If the record is older than 2 windows, remove it
@@ -21,6 +21,7 @@ setInterval(() => {
     }
   }
 }, 30000); // Clean up every 30 seconds
+wsRateLimitCleanup.unref();
 
 function getUserIdFromCookie(cookieHeader) {
   if (!cookieHeader) return null;
@@ -250,7 +251,7 @@ module.exports = function (fastify) {
   });
 
   // Periodically remove dead connections
-  setInterval(() => {
+  const heartbeatCleanup = setInterval(() => {
     wss.clients.forEach((ws) => {
       if (ws.isAlive === false) {
         return ws.terminate();
@@ -258,6 +259,7 @@ module.exports = function (fastify) {
       // Ensure all connections are marked as not alive until next heartbeat
     });
   }, 30000); // Check every 30 seconds
+  heartbeatCleanup.unref();
 
   function broadcast(payload) {
     const data = JSON.stringify(payload);

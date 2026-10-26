@@ -1,7 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const MEDIA_DIR = path.resolve(path.join(__dirname, '../data/media'));
+// Directory for stored media files. CHAGOURTEE_MEDIA_DIR keeps tests and
+// custom deployments from touching server/data/media.
+const MEDIA_DIR = process.env.CHAGOURTEE_MEDIA_DIR
+  ? path.resolve(process.env.CHAGOURTEE_MEDIA_DIR)
+  : path.resolve(path.join(__dirname, '../data/media'));
 
 /**
  * Resolves a media filename to an absolute path, refusing anything that

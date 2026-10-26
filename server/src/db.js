@@ -251,4 +251,4 @@ function getDb() {
   return dbInstance;
 }
 
-module.exports = { getDb, getDbPath, ensureDataDir };
+module.exports = { createDb, getDb, getDbPath, ensureDataDir };

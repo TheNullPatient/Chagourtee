@@ -251,6 +251,30 @@ The update script will:
 
 > **Note**: Make sure you have committed any local changes before running the update, as the script will switch to a specific tag which may overwrite uncommitted changes.
 
+## Testing
+
+The server integration tests run from the project root:
+
+```bash
+npm test
+```
+
+Each test creates a temporary SQLite database and its own media directory (`CHAGOURTEE_MEDIA_DIR`), so the real `server/data/chagourtee.db` and `server/data/media` are never modified. The suite covers schema migrations, foreign keys and media cleanup when rooms/users are deleted, media uploads and downloads with quotas, audio transcoding, verification codes and registration, and WebSocket event validation.
+
+Run a single suite directly:
+
+```bash
+cd server
+node --test --expose-gc test/media.test.js
+```
+
+Client checks:
+
+```bash
+npm run build:client
+npm run lint
+```
+
 ## API (briefly)
 
 - `POST /api/auth/login` – login
