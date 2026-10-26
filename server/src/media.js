@@ -2,13 +2,22 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
+const { Readable, Transform } = require('stream');
+const { pipeline } = require('stream/promises');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
 const ffmpeg = require('fluent-ffmpeg');
-const { getDb } = require('./db');
 
-// Directory for storing encrypted media files
-const MEDIA_DIR = path.join(__dirname, '../data/media');
+// Directory for storing encrypted media files.
+// CHAGOURTEE_MEDIA_DIR exists so tests can use an isolated directory.
+const MEDIA_DIR = process.env.CHAGOURTEE_MEDIA_DIR
+    ? path.resolve(process.env.CHAGOURTEE_MEDIA_DIR)
+    : path.join(__dirname, '../data/media');
+
+// Encrypted file layout: [IV 16 bytes][GCM auth tag 16 bytes][ciphertext]
+const MEDIA_HEADER_SIZE = 32;
+const MEDIA_IV_SIZE = 16;
+const MEDIA_AUTH_TAG_SIZE = 16;
 
 // Configure ffmpeg/fluent-ffmpeg binaries
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -39,39 +48,166 @@ function generateEncryptedFilename(originalName) {
 }
 
 /**
- * Encrypts file content using AES-256-GCM
+ * Reads the AES-GCM header of an encrypted media file.
  */
-function encryptFile(buffer, key) {
-    const iv = crypto.randomBytes(16); // 128 bit IV for GCM
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    
-    let encrypted = cipher.update(buffer);
-    encrypted = Buffer.concat([encrypted, cipher.final()]);
-    
-    const authTag = cipher.getAuthTag();
-    
-    // Prepend IV and authTag to the encrypted data
-    const result = Buffer.concat([iv, authTag, encrypted]);
-    
-    return result;
+function readEncryptedFileHeader(filePath) {
+    const fd = fs.openSync(filePath, 'r');
+    try {
+        const header = Buffer.alloc(MEDIA_HEADER_SIZE);
+        const bytesRead = fs.readSync(fd, header, 0, MEDIA_HEADER_SIZE, 0);
+        if (bytesRead < MEDIA_HEADER_SIZE) {
+            throw new Error('Invalid media file: truncated header');
+        }
+        const stat = fs.fstatSync(fd);
+        return {
+            iv: header.subarray(0, MEDIA_IV_SIZE),
+            authTag: header.subarray(
+                MEDIA_IV_SIZE,
+                MEDIA_IV_SIZE + MEDIA_AUTH_TAG_SIZE
+            ),
+            plaintextSize: Math.max(0, stat.size - MEDIA_HEADER_SIZE),
+        };
+    } finally {
+        fs.closeSync(fd);
+    }
 }
 
 /**
- * Decrypts file content using AES-256-GCM
+ * Returns the configured 32-byte media encryption key.
  */
-function decryptFile(buffer, key) {
-    // Extract IV (first 16 bytes) and authTag (next 16 bytes)
-    const iv = buffer.subarray(0, 16);
-    const authTag = buffer.subarray(16, 32);
-    const encrypted = buffer.subarray(32);
-    
+function getMediaEncryptionKey() {
+    const encryptionKey = process.env.CHAGOURTEE_MEDIA_ENCRYPTION_KEY;
+    if (!encryptionKey) {
+        throw new Error('Encryption key not configured');
+    }
+    const keyBuffer = Buffer.from(encryptionKey, 'hex');
+    if (keyBuffer.length !== 32) {
+        throw new Error('Invalid encryption key configuration');
+    }
+    return keyBuffer;
+}
+
+async function safeUnlink(filePath) {
+    if (!filePath) return;
+    try {
+        await fs.promises.unlink(filePath);
+    } catch (error) {
+        if (error && error.code !== 'ENOENT') {
+            console.error(`Failed to delete ${filePath}:`, error);
+        }
+    }
+}
+
+/**
+ * Encrypts a readable stream into an AES-256-GCM media file without ever
+ * holding the whole upload in memory.
+ * Returns the plaintext byte count.
+ */
+async function encryptStreamToFile(sourceStream, destinationPath, key) {
+    const iv = crypto.randomBytes(MEDIA_IV_SIZE);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+    const output = fs.createWriteStream(destinationPath, { flags: 'wx' });
+    // Reserve space for the IV and auth tag; both are written once the cipher
+    // has finished and the authentication tag exists.
+    output.write(Buffer.alloc(MEDIA_HEADER_SIZE));
+
+    let size = 0;
+    const byteCounter = new Transform({
+        transform(chunk, encoding, callback) {
+            size += chunk.length;
+            callback(null, chunk);
+        },
+    });
+
+    try {
+        await pipeline(sourceStream, byteCounter, cipher, output);
+    } catch (error) {
+        output.destroy();
+        await safeUnlink(destinationPath);
+        throw error;
+    }
+
+    const authTag = cipher.getAuthTag();
+    const handle = await fs.promises.open(destinationPath, 'r+');
+    try {
+        await handle.write(iv, 0, iv.length, 0);
+        await handle.write(authTag, 0, authTag.length, MEDIA_IV_SIZE);
+    } finally {
+        await handle.close();
+    }
+
+    return size;
+}
+
+/**
+ * Decrypts an encrypted media file into a plaintext file on disk.
+ */
+async function decryptFileToFile(encryptedPath, destinationPath, key) {
+    const { iv, authTag } = readEncryptedFileHeader(encryptedPath);
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(authTag);
-    
-    let decrypted = decipher.update(encrypted);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    
-    return decrypted;
+
+    try {
+        await pipeline(
+            fs.createReadStream(encryptedPath, { start: MEDIA_HEADER_SIZE }),
+            decipher,
+            fs.createWriteStream(destinationPath)
+        );
+    } catch (error) {
+        await safeUnlink(destinationPath);
+        throw error;
+    }
+}
+
+/**
+ * Creates a readable stream with plaintext bytes [start, end] (inclusive).
+ *
+ * AES-GCM has to process the ciphertext from the beginning to produce a block,
+ * so for Range requests the prefix is decrypted and discarded. Memory usage
+ * stays bounded by the stream high-water mark.
+ *
+ * The auth tag is verified only when the complete plaintext is requested.
+ */
+function createDecryptedRangeStream(filePath, header, key, start, end) {
+    const input = fs.createReadStream(filePath, {
+        start: MEDIA_HEADER_SIZE,
+        end: MEDIA_HEADER_SIZE + end,
+    });
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, header.iv);
+    decipher.setAuthTag(header.authTag);
+
+    const isWholeFile = start === 0 && end === header.plaintextSize - 1;
+    let toSkip = start;
+
+    async function* generate() {
+        try {
+            for await (const chunk of input) {
+                let plaintext = decipher.update(chunk);
+                if (plaintext.length === 0) continue;
+
+                if (toSkip > 0) {
+                    if (plaintext.length <= toSkip) {
+                        toSkip -= plaintext.length;
+                        continue;
+                    }
+                    plaintext = plaintext.subarray(toSkip);
+                    toSkip = 0;
+                }
+
+                yield plaintext;
+            }
+
+            if (isWholeFile) {
+                const finalChunk = decipher.final();
+                if (finalChunk.length > 0) yield finalChunk;
+            }
+        } finally {
+            input.destroy();
+        }
+    }
+
+    return Readable.from(generate());
 }
 
 /**
@@ -84,34 +220,13 @@ function isFileTypeAllowed(mimeType, originalName) {
 
 /**
  * Analyze audio codec using ffprobe.
- * Writes buffer to a temporary file, runs ffprobe and returns codec info.
+ * Expects a plaintext audio file on disk.
  */
-function analyzeAudioCodec(buffer, originalName, mimeType) {
+function analyzeAudioCodec(filePath) {
     return new Promise((resolve, reject) => {
-        const tmpDir = os.tmpdir();
-        const safeBase =
-            path
-                .basename(originalName || 'audio', path.extname(originalName || '')) || 'audio';
-        const tmpInput = path.join(
-            tmpDir,
-            `${safeBase}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`
-        );
-
-        try {
-            fs.writeFileSync(tmpInput, buffer);
-        } catch (e) {
-            return reject(e);
-        }
-
         ffmpeg()
-            .input(tmpInput)
+            .input(filePath)
             .ffprobe((err, data) => {
-                try {
-                    fs.unlinkSync(tmpInput);
-                } catch (_) {
-                    // ignore
-                }
-
                 if (err) {
                     return reject(err);
                 }
@@ -124,7 +239,6 @@ function analyzeAudioCodec(buffer, originalName, mimeType) {
                     sampleRate: audioStream ? Number(audioStream.sample_rate) || null : null,
                     channels: audioStream ? audioStream.channels || null : null,
                     formatName: data.format ? data.format.format_name : null,
-                    mimeType: mimeType || null,
                 });
             });
     });
@@ -448,26 +562,8 @@ async function mediaPlugin(fastify, options) {
      * Returns object describing which encrypted file and mime type to serve.
      */
     async function ensureFlacTranscode(mediaFile) {
-        const encryptionKey = process.env.CHAGOURTEE_MEDIA_ENCRYPTION_KEY;
-        if (!encryptionKey) {
-            throw new Error('Encryption key not configured');
-        }
-        const keyBuffer = Buffer.from(encryptionKey, 'hex');
-        if (keyBuffer.length !== 32) {
-            throw new Error('Invalid encryption key configuration');
-        }
-
+        const keyBuffer = getMediaEncryptionKey();
         const now = Date.now();
-
-        // Helper to load and decrypt a given encrypted filename
-        const loadDecryptedBuffer = (encryptedFilename) => {
-            const filePath = path.join(MEDIA_DIR, encryptedFilename);
-            if (!fs.existsSync(filePath)) {
-                throw new Error('File not found on disk');
-            }
-            const encryptedBuffer = fs.readFileSync(filePath);
-            return decryptFile(encryptedBuffer, keyBuffer);
-        };
 
         // If we have existing transcode, check TTL
         if (mediaFile.transcoded_filename) {
@@ -518,150 +614,129 @@ async function mediaPlugin(fastify, options) {
             }
         }
 
-        // Analyze original to decide if transcode is needed
-        let originalBuffer;
-        try {
-            originalBuffer = loadDecryptedBuffer(mediaFile.encrypted_filename);
-        } catch (e) {
-            throw e;
-        }
+        const originalResult = {
+            encryptedFilenameToServe: mediaFile.encrypted_filename,
+            mimeTypeToServe: mediaFile.mime_type,
+            isTranscoded: false,
+        };
 
-        let codecInfo;
-        try {
-            codecInfo = await analyzeAudioCodec(
-                originalBuffer,
-                mediaFile.original_name,
-                mediaFile.mime_type
-            );
-        } catch (e) {
-            fastify.log.error(
-                'Failed to analyze audio codec for media file',
-                mediaFile.id,
-                e
-            );
-            // If analysis fails, fall back to original
-            return {
-                encryptedFilenameToServe: mediaFile.encrypted_filename,
-                mimeTypeToServe: mediaFile.mime_type,
-                isTranscoded: false,
-            };
-        }
-
-        const needTranscode = shouldTranscodeToFlac(
-            codecInfo.codecName,
-            mediaFile.mime_type,
-            mediaFile.original_name
-        );
-
-        if (!needTranscode) {
-            return {
-                encryptedFilenameToServe: mediaFile.encrypted_filename,
-                mimeTypeToServe: mediaFile.mime_type,
-                isTranscoded: false,
-            };
-        }
-
-        // Perform transcode to FLAC using ffmpeg
         const tmpDir = os.tmpdir();
         const safeBase =
             path
                 .basename(mediaFile.original_name || 'audio', path.extname(mediaFile.original_name || '')) ||
             'audio';
-        const tmpInput = path.join(
-            tmpDir,
-            `${safeBase}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}_in`
-        );
-        const tmpOutput = path.join(
-            tmpDir,
-            `${safeBase}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}_out.flac`
-        );
+        const tmpSuffix = `${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+        const tmpInput = path.join(tmpDir, `${safeBase}_${tmpSuffix}_in`);
+        const tmpOutput = path.join(tmpDir, `${safeBase}_${tmpSuffix}_out.flac`);
 
         try {
-            fs.writeFileSync(tmpInput, originalBuffer);
-        } catch (e) {
-            throw e;
-        }
+            const encryptedPath = path.join(MEDIA_DIR, mediaFile.encrypted_filename);
+            if (!fs.existsSync(encryptedPath)) {
+                throw new Error('File not found on disk');
+            }
 
-        try {
-            await new Promise((resolve, reject) => {
-                ffmpeg(tmpInput)
-                    .toFormat('flac')
-                    .on('error', (err) => {
-                        reject(err);
-                    })
-                    .on('end', () => {
-                        resolve();
-                    })
-                    .save(tmpOutput);
-            });
+            // Decrypt to a temporary plaintext file so ffmpeg/ffprobe can work
+            // on it without loading the whole file into memory.
+            await decryptFileToFile(encryptedPath, tmpInput, keyBuffer);
+
+            let codecInfo;
+            try {
+                codecInfo = await analyzeAudioCodec(tmpInput);
+            } catch (e) {
+                fastify.log.error(
+                    'Failed to analyze audio codec for media file',
+                    mediaFile.id,
+                    e
+                );
+                return originalResult;
+            }
+
+            const needTranscode = shouldTranscodeToFlac(
+                codecInfo.codecName,
+                mediaFile.mime_type,
+                mediaFile.original_name
+            );
+
+            if (!needTranscode) {
+                return originalResult;
+            }
+
+            // Perform transcode to FLAC using ffmpeg
+            try {
+                await new Promise((resolve, reject) => {
+                    ffmpeg(tmpInput)
+                        .toFormat('flac')
+                        .on('error', (err) => {
+                            reject(err);
+                        })
+                        .on('end', () => {
+                            resolve();
+                        })
+                        .save(tmpOutput);
+                });
+            } catch (err) {
+                fastify.log.error(
+                    'Failed to transcode audio to FLAC for media file',
+                    mediaFile.id,
+                    err
+                );
+                return originalResult;
+            }
+
+            const flacEncryptedFilename = generateEncryptedFilename(
+                `${mediaFile.original_name}.flac`
+            );
+            const flacEncryptedPath = path.join(MEDIA_DIR, flacEncryptedFilename);
+            const tempEncryptedPath = `${flacEncryptedPath}.part`;
+
+            try {
+                await encryptStreamToFile(
+                    fs.createReadStream(tmpOutput),
+                    tempEncryptedPath,
+                    keyBuffer
+                );
+                await fs.promises.rename(tempEncryptedPath, flacEncryptedPath);
+            } catch (err) {
+                await safeUnlink(tempEncryptedPath);
+                throw err;
+            }
+
+            const createdAt = Date.now();
+            try {
+                db.prepare(
+                    `
+                    UPDATE media_files
+                    SET transcoded_filename = ?,
+                        transcoded_mime_type = ?,
+                        transcoded_created_at = ?
+                    WHERE id = ?
+                `
+                ).run(flacEncryptedFilename, 'audio/flac', createdAt, mediaFile.id);
+            } catch (err) {
+                await safeUnlink(flacEncryptedPath);
+                throw err;
+            }
+
+            mediaFile.transcoded_filename = flacEncryptedFilename;
+            mediaFile.transcoded_mime_type = 'audio/flac';
+            mediaFile.transcoded_created_at = createdAt;
+
+            return {
+                encryptedFilenameToServe: flacEncryptedFilename,
+                mimeTypeToServe: 'audio/flac',
+                isTranscoded: true,
+            };
         } catch (err) {
             fastify.log.error(
-                'Failed to transcode audio to FLAC for media file',
+                'Failed to prepare audio media file',
                 mediaFile.id,
                 err
             );
-            try {
-                if (fs.existsSync(tmpInput)) fs.unlinkSync(tmpInput);
-            } catch (_) {}
-            try {
-                if (fs.existsSync(tmpOutput)) fs.unlinkSync(tmpOutput);
-            } catch (_) {}
-            // On failure, fall back to original
-            return {
-                encryptedFilenameToServe: mediaFile.encrypted_filename,
-                mimeTypeToServe: mediaFile.mime_type,
-                isTranscoded: false,
-            };
+            return originalResult;
+        } finally {
+            await safeUnlink(tmpInput);
+            await safeUnlink(tmpOutput);
         }
-
-        let flacBuffer;
-        try {
-            flacBuffer = fs.readFileSync(tmpOutput);
-        } catch (e) {
-            try {
-                if (fs.existsSync(tmpInput)) fs.unlinkSync(tmpInput);
-            } catch (_) {}
-            try {
-                if (fs.existsSync(tmpOutput)) fs.unlinkSync(tmpOutput);
-            } catch (_) {}
-            throw e;
-        }
-
-        try {
-            if (fs.existsSync(tmpInput)) fs.unlinkSync(tmpInput);
-        } catch (_) {}
-        try {
-            if (fs.existsSync(tmpOutput)) fs.unlinkSync(tmpOutput);
-        } catch (_) {}
-
-        const encryptedFlacBuffer = encryptFile(flacBuffer, keyBuffer);
-        const flacEncryptedFilename = generateEncryptedFilename(
-            `${mediaFile.original_name}.flac`
-        );
-        const flacEncryptedPath = path.join(MEDIA_DIR, flacEncryptedFilename);
-
-        fs.writeFileSync(flacEncryptedPath, encryptedFlacBuffer);
-
-        const createdAt = Date.now();
-        db.prepare(
-            `
-            UPDATE media_files
-            SET transcoded_filename = ?,
-                transcoded_mime_type = ?,
-                transcoded_created_at = ?
-            WHERE id = ?
-        `
-        ).run(flacEncryptedFilename, 'audio/flac', createdAt, mediaFile.id);
-
-        mediaFile.transcoded_filename = flacEncryptedFilename;
-        mediaFile.transcoded_mime_type = 'audio/flac';
-        mediaFile.transcoded_created_at = createdAt;
-
-        return {
-            encryptedFilenameToServe: flacEncryptedFilename,
-            mimeTypeToServe: 'audio/flac',
-            isTranscoded: true,
-        };
     }
 
     fastify.get(
@@ -816,6 +891,10 @@ async function mediaPlugin(fastify, options) {
     fastify.post('/api/upload', {
         preHandler: [fastify.requireAuth]
     }, async (req, reply) => {
+        let tempPath = null;
+        let finalPath = null;
+        let fileCommitted = false;
+
         try {
             const uploadSettings = getUploadSettings();
             if (!uploadSettings.uploadsEnabled) {
@@ -825,12 +904,27 @@ async function mediaPlugin(fastify, options) {
                 });
             }
 
-            const data = await req.file();
-            
+            if (!req.isMultipart()) {
+                return reply.code(400).send({ error: 'Expected a multipart/form-data request' });
+            }
+
+            // Enforce the per-request limit while the file is being streamed.
+            // `throwFileSizeLimit: false` lets us return a consistent JSON error
+            // instead of relying on the multipart plugin's exception.
+            const fileSizeLimit =
+                !uploadSettings.unlimited && uploadSettings.maxFileSize > 0
+                    ? uploadSettings.maxFileSize
+                    : undefined;
+
+            const data = await req.file({
+                limits: fileSizeLimit ? { fileSize: fileSizeLimit } : undefined,
+                throwFileSizeLimit: false,
+            });
+
             if (!data) {
                 return reply.code(400).send({ error: 'No file uploaded' });
             }
-            
+
             // Override MIME type for .aif/.aiff to treat as documents
             let mimeTypeToUse = data.mimetype;
             const lowerName = data.filename.toLowerCase();
@@ -843,18 +937,33 @@ async function mediaPlugin(fastify, options) {
                 return reply.code(400).send({ error: 'File type not allowed' });
             }
 
-            // Check file size (already limited by multipart config)
-            if (data.file.truncated) {
-                return reply.code(413).send({
-                    error: 'File too large',
-                    code: 'MEDIA_FILE_TOO_LARGE',
-                    maxFileSize: uploadSettings.maxFileSize,
-                });
+            let keyBuffer;
+            try {
+                keyBuffer = getMediaEncryptionKey();
+            } catch (error) {
+                console.error('Media encryption is not configured correctly:', error.message);
+                return reply.code(500).send({ error: error.message });
             }
 
-            // Read file buffer
-            const buffer = await data.toBuffer();
-            if (!uploadSettings.unlimited && uploadSettings.maxFileSize && buffer.length > uploadSettings.maxFileSize) {
+            const encryptedFilename = generateEncryptedFilename(data.filename);
+            finalPath = path.join(MEDIA_DIR, encryptedFilename);
+            tempPath = `${finalPath}.part`;
+
+            // Stream the upload through AES-GCM into a temporary file. The whole
+            // file is never buffered in memory.
+            let uploadedBytes;
+            try {
+                uploadedBytes = await encryptStreamToFile(data.file, tempPath, keyBuffer);
+            } catch (error) {
+                await safeUnlink(tempPath);
+                throw error;
+            }
+
+            if (
+                data.file.truncated ||
+                (fileSizeLimit !== undefined && uploadedBytes > fileSizeLimit)
+            ) {
+                await safeUnlink(tempPath);
                 return reply.code(413).send({
                     error: 'File too large',
                     code: 'MEDIA_FILE_TOO_LARGE',
@@ -867,7 +976,7 @@ async function mediaPlugin(fastify, options) {
             const storageLimit = storageSettings.maxStorageSize;
             if (storageLimit > 0) {
                 const usage = getCurrentStorageUsage();
-                const projectedTotal = usage.totalBytes + buffer.length;
+                const projectedTotal = usage.totalBytes + uploadedBytes;
                 if (projectedTotal > storageLimit) {
                     if (storageSettings.cleanupStrategy === 'delete_oldest') {
                         const bytesToFree = projectedTotal - storageLimit;
@@ -878,8 +987,9 @@ async function mediaPlugin(fastify, options) {
                     }
 
                     const recheckedUsage = getCurrentStorageUsage();
-                    const recheckedProjectedTotal = recheckedUsage.totalBytes + buffer.length;
+                    const recheckedProjectedTotal = recheckedUsage.totalBytes + uploadedBytes;
                     if (recheckedProjectedTotal > storageLimit) {
+                        await safeUnlink(tempPath);
                         return reply.code(413).send({
                             error: 'Media storage quota exceeded',
                             code: 'MEDIA_STORAGE_QUOTA_EXCEEDED',
@@ -891,31 +1001,10 @@ async function mediaPlugin(fastify, options) {
                 }
             }
 
-            // Generate encrypted filename
-            const encryptedFilename = generateEncryptedFilename(data.filename);
-            const filePath = path.join(MEDIA_DIR, encryptedFilename);
-
-            // Get encryption key from environment
-            const encryptionKey = process.env.CHAGOURTEE_MEDIA_ENCRYPTION_KEY;
-            if (!encryptionKey) {
-                console.error('CHAGOURTEE_MEDIA_ENCRYPTION_KEY is not set!');
-                return reply.code(500).send({ error: 'Encryption key not configured' });
-            }
-
-            // Convert hex string to buffer
-            const keyBuffer = Buffer.from(encryptionKey, 'hex');
-
-            if (keyBuffer.length !== 32) {
-                console.error('CHAGOURTEE_MEDIA_ENCRYPTION_KEY must be 32 bytes for AES-256 (64 hex characters)');
-                return reply.code(500).send({ error: 'Invalid encryption key configuration' });
-            }
-
-            // Encrypt and save file
-            const encryptedBuffer = encryptFile(buffer, keyBuffer);
-            fs.writeFileSync(filePath, encryptedBuffer);
+            await fs.promises.rename(tempPath, finalPath);
+            fileCommitted = true;
 
             // Save metadata to database
-            const db = fastify.db;
             const stmt = db.prepare(`
                 INSERT INTO media_files (
                     original_name, 
@@ -925,12 +1014,12 @@ async function mediaPlugin(fastify, options) {
                     uploaded_by
                 ) VALUES (?, ?, ?, ?, ?)
             `);
-            
+
             const result = stmt.run(
                 data.filename,
                 encryptedFilename,
                 mimeTypeToUse,
-                buffer.length,
+                uploadedBytes,
                 req.user.id
             );
 
@@ -940,9 +1029,16 @@ async function mediaPlugin(fastify, options) {
                 original_name: data.filename,
                 encrypted_filename: encryptedFilename,
                 mime_type: mimeTypeToUse,
-                file_size: buffer.length
+                file_size: uploadedBytes
             });
         } catch (error) {
+            if (tempPath) {
+                await safeUnlink(tempPath);
+            }
+            if (fileCommitted && finalPath) {
+                await safeUnlink(finalPath);
+            }
+
             if (
                 error &&
                 (error.code === 'FST_REQ_FILE_TOO_LARGE' || error.code === 'RequestFileTooLargeError')
@@ -1028,56 +1124,54 @@ async function mediaPlugin(fastify, options) {
                     }
                 }
 
-                const filePath = path.join(MEDIA_DIR, encryptedFilenameToServe);
+                const filePath = path.resolve(MEDIA_DIR, encryptedFilenameToServe);
+                if (!filePath.startsWith(MEDIA_DIR + path.sep)) {
+                    return reply.code(400).send({ error: 'Invalid filename' });
+                }
 
                 if (!fs.existsSync(filePath)) {
                     return reply.code(404).send({ error: 'File not found' });
                 }
 
-                // Read encrypted file
-                const encryptedBuffer = fs.readFileSync(filePath);
-
-                // Get encryption key from environment
-                const encryptionKey = process.env.CHAGOURTEE_MEDIA_ENCRYPTION_KEY;
-                if (!encryptionKey) {
-                    console.error('CHAGOURTEE_MEDIA_ENCRYPTION_KEY is not set!');
-                    return reply.code(500).send({ error: 'Encryption key not configured' });
+                let keyBuffer;
+                try {
+                    keyBuffer = getMediaEncryptionKey();
+                } catch (error) {
+                    console.error('Media encryption is not configured correctly:', error.message);
+                    return reply.code(500).send({ error: error.message });
                 }
 
-                // Convert hex string to buffer
-                const keyBuffer = Buffer.from(encryptionKey, 'hex');
-
-                if (keyBuffer.length !== 32) {
-                    console.error(
-                        'CHAGOURTEE_MEDIA_ENCRYPTION_KEY must be 32 bytes for AES-256 (64 hex characters)'
-                    );
-                    return reply
-                        .code(500)
-                        .send({ error: 'Invalid encryption key configuration' });
+                let header;
+                try {
+                    header = readEncryptedFileHeader(filePath);
+                } catch (error) {
+                    console.error('Failed to read media file header:', error);
+                    return reply.code(500).send({ error: 'Failed to read media file' });
                 }
 
-                // Decrypt file into memory
-                const decryptedBuffer = decryptFile(encryptedBuffer, keyBuffer);
-
-                const total = decryptedBuffer.length;
+                const total = header.plaintextSize;
                 const range = req.headers.range;
 
                 reply.header('Accept-Ranges', 'bytes');
 
                 if (!range) {
-                    // No Range header: send whole content
                     reply
                         .code(200)
                         .header('Content-Length', String(total))
-                        .type(mimeTypeToServe)
-                        .send(decryptedBuffer);
-                    return;
+                        .type(mimeTypeToServe);
+
+                    if (total === 0) {
+                        return reply.send(Buffer.alloc(0));
+                    }
+
+                    return reply.send(
+                        createDecryptedRangeStream(filePath, header, keyBuffer, 0, total - 1)
+                    );
                 }
 
-                // Parse Range header: bytes=start-end
+                // Parse Range header: bytes=start-end, bytes=start-, bytes=-suffix
                 const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-                if (!match) {
-                    // Malformed Range
+                if (!match || (match[1] === '' && match[2] === '')) {
                     reply
                         .code(416)
                         .header('Content-Range', `bytes */${total}`)
@@ -1085,39 +1179,52 @@ async function mediaPlugin(fastify, options) {
                     return;
                 }
 
-                let start = match[1] === '' ? 0 : parseInt(match[1], 10);
-                let end =
-                    match[2] === ''
-                        ? total - 1
-                        : parseInt(match[2], 10);
+                let start;
+                let end;
 
-                if (
-                    Number.isNaN(start) ||
-                    Number.isNaN(end) ||
-                    start < 0 ||
-                    end < start ||
-                    start >= total
-                ) {
-                    reply
-                        .code(416)
-                        .header('Content-Range', `bytes */${total}`)
-                        .send();
-                    return;
-                }
-
-                if (end >= total) {
+                if (match[1] === '') {
+                    const suffixLength = parseInt(match[2], 10);
+                    if (!Number.isFinite(suffixLength) || suffixLength <= 0 || total === 0) {
+                        reply
+                            .code(416)
+                            .header('Content-Range', `bytes */${total}`)
+                            .send();
+                        return;
+                    }
+                    start = Math.max(total - suffixLength, 0);
                     end = total - 1;
+                } else {
+                    start = parseInt(match[1], 10);
+                    end = match[2] === '' ? total - 1 : parseInt(match[2], 10);
+
+                    if (
+                        !Number.isFinite(start) ||
+                        !Number.isFinite(end) ||
+                        start < 0 ||
+                        end < start ||
+                        start >= total
+                    ) {
+                        reply
+                            .code(416)
+                            .header('Content-Range', `bytes */${total}`)
+                            .send();
+                        return;
+                    }
+
+                    if (end >= total) {
+                        end = total - 1;
+                    }
                 }
 
-                const chunk = decryptedBuffer.subarray(start, end + 1);
-                const contentRange = `bytes ${start}-${end}/${total}`;
-
-                reply
+                const contentLength = end - start + 1;
+                return reply
                     .code(206)
-                    .header('Content-Range', contentRange)
-                    .header('Content-Length', String(chunk.length))
+                    .header('Content-Range', `bytes ${start}-${end}/${total}`)
+                    .header('Content-Length', String(contentLength))
                     .type(mimeTypeToServe)
-                    .send(chunk);
+                    .send(
+                        createDecryptedRangeStream(filePath, header, keyBuffer, start, end)
+                    );
             } catch (error) {
                 console.error('Serve media error:', error);
                 reply.code(500).send({
