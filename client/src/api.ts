@@ -395,6 +395,7 @@ export const serverVersion = {
 };
 
 export const verification = {
+  status: () => api<{ enabled: boolean }>('/api/verification/status'),
   settings: () => api<{ enabled: boolean }>('/api/verification/settings'),
   updateSettings: (enabled: boolean) => 
     api<{ ok: boolean, enabled: boolean }>('/api/verification/settings', {
@@ -405,14 +406,14 @@ export const verification = {
   listCodes: () => 
     api<{ codes: {id: number, created_by_login: string, used: number, created_at: string, expires_at: string}[] }>('/api/verification/codes'),
   createCode: (customCode?: string) => 
-    api<{ code: string, id: number }>('/api/invites/codes', {
+    api<{ code: string, id: number, expires_at: string }>('/api/verification/codes', {
       method: 'POST',
-      body: JSON.stringify({ customCode }),
+      body: JSON.stringify({ code: customCode }),
     }),
-  updateCode: (id: number, expiration: string) => 
+  updateCode: (id: number, expiresAt: string) => 
     api<{ ok: boolean }>('/api/verification/codes/' + id, {
       method: 'PATCH',
-      body: JSON.stringify({ expiration }),
+      body: JSON.stringify({ expiresAt }),
     }),
   useCode: (code: string) => 
     api<{ ok: boolean }>('/api/verification/codes/use', {

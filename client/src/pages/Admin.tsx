@@ -262,14 +262,14 @@ export default function Admin() {
           // Админке не нужно состояние сообщений по комнатам, можно игнорировать
           break;
 
-        case 'admin_invites_updated':
+        case 'invites_changed':
           // Перезагружаем только инвайты
           invitesApi.list()
             .then(res => setInvites(res.invites))
             .catch(() => {});
           break;
 
-        case 'admin_verification_codes_updated':
+        case 'verification_codes_changed':
           if (user.role === 'owner') {
             verificationApi.listCodes()
               .then(res => setCodes(res.codes))
@@ -749,7 +749,7 @@ export default function Admin() {
         created_by_login: "Вы", // Placeholder - in real app, we'd fetch this info separately
         used: 0,
         created_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 7*24*60*60*1000).toISOString() // Expires in 7 days
+        expires_at: newCode.expires_at
       };
       setCodes([fullCode, ...codes]);
 

@@ -22,7 +22,7 @@ export default function Register() {
 
   useEffect(() => {
     verification
-      .settings()
+      .status()
       .then((data) => setVerificationEnabled(!!data.enabled))
       .catch((err) => console.error('Failed to load verification settings:', err));
 
@@ -43,11 +43,9 @@ export default function Register() {
       });
       setUser(user);
       await refresh();
-      if (verificationEnabled && !user.verified) {
-        navigate('/settings', { replace: true });
-      } else {
-        navigate('/', { replace: true });
-      }
+      // Unverified users are redirected to the verification waiting screen
+      // by the route guard on /chat.
+      navigate('/', { replace: true });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Ошибка регистрации';
       const translatedError = errorTranslations[errorMessage] || errorMessage;

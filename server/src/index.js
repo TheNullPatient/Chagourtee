@@ -198,14 +198,26 @@ async function run() {
       // Check if verification is enabled globally
       const verificationSetting = server.db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
       const isVerificationEnabled = verificationSetting ? !!verificationSetting.enabled : false;
-      
-      const codewordHash = codeword ? hashPassword(codeword) : null;
-      // If verification is enabled, set user as unverified (0), otherwise auto-verify (1)
-      const shouldBeVerified = isVerificationEnabled ? 0 : (codeword ? 0 : 1);
+
+      if (isVerificationEnabled) {
+        if (typeof codeword !== 'string' || codeword.trim().length === 0) {
+          return reply.code(400).send({ error: 'Codeword required' });
+        }
+        if (codeword.trim().length > 128) {
+          return reply.code(400).send({ error: 'Codeword must not exceed 128 characters' });
+        }
+      }
+
+      const codewordHash = typeof codeword === 'string' && codeword.trim().length > 0
+        ? hashPassword(codeword.trim())
+        : null;
+      // Only the verification system may leave a new account unverified.
+      // Otherwise a stray codeword must not lock the user out.
+      const shouldBeVerified = isVerificationEnabled ? 0 : 1;
       
       server.db.prepare(
         'INSERT INTO users (login, password_hash, role, verified, codeword_hash) VALUES (?, ?, ?, ?, ?)'
-      ).run(loginTrim, hashPassword(password), 'member', shouldBeVerified, codewordHash);
+      ).run(loginTrim, hashPassword(password), 'member', shouldBeVerified, isVerificationEnabled ? codewordHash : null);
       server.db.prepare('UPDATE invites SET uses_count = uses_count + 1 WHERE id = ?').run(inviteId);
     }
 
