@@ -32,11 +32,16 @@ function getUserIdFromCookie(cookieHeader) {
   return row.user_id;
 }
 
+function isValidRoomId(value) {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0;
+}
+
 module.exports = function (fastify) {
   const server = fastify.server;
   if (!server) return;
 
-  const wss = new WebSocket.Server({ server, path: '/ws' });
+  const wss = new WebSocket.Server({ server, path: '/ws', maxPayload: 256 * 1024 });
   const clientsByUser = new Map();
   const userByClient = new Map();
 
@@ -116,13 +121,36 @@ module.exports = function (fastify) {
         // Currently, none of the WebSocket message types should be rate limited since they are all service messages
         // Text messages are rate limited separately via the REST API
         
-        if (msg.type === 'typing' && msg.roomId != null) {
-          broadcastToRoom(Number(msg.roomId), { type: 'typing', userId, login: user?.login || userId }, ws);
+        // WebSocket is only used for ephemeral events (presence, typing,
+        // media availability). Messages, edits, deletions and media metadata
+        // are persisted through the REST API, which performs authorization.
+        // Never trust or rebroadcast content-mutating events from a client.
+        if (msg.type === 'typing' && isValidRoomId(msg.roomId)) {
+          const roomId = Number(msg.roomId);
+          // Only allow typing events for the room this socket has joined
+          if (ws.currentRoomId === roomId) {
+            broadcastToRoom(roomId, { type: 'typing', userId, login: user?.login || userId }, ws);
+          }
         }
-        if (msg.type === 'join' && msg.roomId != null) {
-          ws.currentRoomId = Number(msg.roomId);
+        if (msg.type === 'join' && isValidRoomId(msg.roomId)) {
+          const roomId = Number(msg.roomId);
+          const room = fastify.db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
+          if (!room) {
+            ws.send(JSON.stringify({ type: 'error', code: 'ROOM_NOT_FOUND', message: 'Room not found' }));
+            return;
+          }
+          ws.currentRoomId = roomId;
           if (process.env.DEBUG_MODE === 'true') {
             fastify.log.info(`User ${userId} joined room ${ws.currentRoomId}`);
+          }
+        }
+        if (msg.type === 'leave' && isValidRoomId(msg.roomId)) {
+          const roomId = Number(msg.roomId);
+          if (ws.currentRoomId === roomId) {
+            ws.currentRoomId = null;
+            if (process.env.DEBUG_MODE === 'true') {
+              fastify.log.info(`User ${userId} left room ${roomId}`);
+            }
           }
         }
         // Handle ping messages from client
@@ -130,69 +158,12 @@ module.exports = function (fastify) {
           // Respond with pong
           ws.send(JSON.stringify({ type: 'pong' }));
         }
-        // Handle message update
-        if (msg.type === 'update_message' && msg.messageId && msg.content !== undefined) {
-          if (process.env.DEBUG_MODE === 'true') {
-            fastify.log.info(`Broadcasting message update: ${msg.messageId} in room ${msg.roomId}`);
-          }
-          broadcastToRoom(Number(msg.roomId), { 
-            type: 'message_updated', 
-            messageId: msg.messageId, 
-            content: msg.content,
-            userId, 
-            login: user?.login || userId 
-          }, ws);
-        }
-        // Handle message deletion
-        if (msg.type === 'delete_message' && msg.messageId) {
-          if (process.env.DEBUG_MODE === 'true') {
-            fastify.log.info(`Broadcasting message deletion: ${msg.messageId} in room ${msg.roomId}`);
-          }
-          broadcastToRoom(Number(msg.roomId), { 
-            type: 'message_deleted', 
-            messageId: msg.messageId,
-            userId, 
-            login: user?.login || userId 
-          }, ws);
-        }
-        
-        // Handle media file upload
-        if (msg.type === 'upload_media' && msg.roomId && msg.file) {
-          if (process.env.DEBUG_MODE === 'true') {
-            fastify.log.info(`Broadcasting media upload: ${msg.file.id} in room ${msg.roomId}`);
-          }
-          broadcastToRoom(Number(msg.roomId), { 
-            type: 'media_uploaded', 
-            file: msg.file,
-            userId, 
-            login: user?.login || userId 
-          }, ws);
-        }
-        
-        // Handle media file request
-        if (msg.type === 'request_media' && msg.fileId) {
-          if (process.env.DEBUG_MODE === 'true') {
-            fastify.log.info(`Media request: ${msg.fileId} from room ${msg.roomId}`);
-          }
-          // We don't broadcast this event, it's a point-to-point request
-        }
-        
-        // Handle media file sharing
-        if (msg.type === 'share_media' && msg.roomId && msg.file) {
-          if (process.env.DEBUG_MODE === 'true') {
-            fastify.log.info(`Broadcasting media share: ${msg.file.id} in room ${msg.roomId}`);
-          }
-          broadcastToRoom(Number(msg.roomId), { 
-            type: 'media_shared', 
-            file: msg.file,
-            userId, 
-            login: user?.login || userId 
-          }, ws);
-        }
 
         if (msg.type === 'check_media_availability' && msg.requestId && Array.isArray(msg.files)) {
           const unavailableIds = [];
-          for (const file of msg.files) {
+          // Cap the batch so a client cannot force unbounded DB/disk lookups
+          const files = msg.files.slice(0, 100);
+          for (const file of files) {
             const mediaId = Number(file.id);
             const encryptedFilename = typeof file.encrypted_filename === 'string'
               ? file.encrypted_filename
@@ -239,18 +210,26 @@ module.exports = function (fastify) {
       }
     });
 
-    ws.on('close', () => {
+    let cleanedUp = false;
+    function cleanupConnection() {
+      if (cleanedUp) return;
+      cleanedUp = true;
+
       clearInterval(heartbeatInterval);
+      ws.currentRoomId = null;
       userByClient.delete(ws);
+
       const set = clientsByUser.get(userId);
-      if (set) {
-        set.delete(ws);
-        if (set.size === 0) {
-          clientsByUser.delete(userId);
-          broadcast({ type: 'presence', userId, login: user?.login, online: false });
-        }
+      if (!set) return;
+
+      set.delete(ws);
+      if (set.size === 0) {
+        clientsByUser.delete(userId);
+        broadcast({ type: 'presence', userId, login: user?.login, online: false });
       }
-    });
+    }
+
+    ws.on('close', cleanupConnection);
 
     // Mark connection as alive initially
     ws.isAlive = true;
@@ -266,30 +245,7 @@ module.exports = function (fastify) {
         fastify.log.error(`WebSocket error for user ${userId}:`, error);
       }
       // Force cleanup — connection is dead
-      clearInterval(heartbeatInterval);
-      userByClient.delete(ws);
-      const set = clientsByUser.get(userId);
-      if (set) {
-        set.delete(ws);
-        if (set.size === 0) {
-          clientsByUser.delete(userId);
-          const user = fastify.getUser(userId);
-          broadcast({ type: 'presence', userId, login: user?.login, online: false });
-        }
-      }
-    });
-
-    ws.on('close', () => {
-      clearInterval(heartbeatInterval);
-      userByClient.delete(ws);
-      const set = clientsByUser.get(userId);
-      if (set) {
-        set.delete(ws);
-        if (set.size === 0) {
-          clientsByUser.delete(userId);
-          broadcast({ type: 'presence', userId, login: user?.login, online: false });
-        }
-      }
+      cleanupConnection();
     });
   });
 

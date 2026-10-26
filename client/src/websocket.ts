@@ -26,7 +26,7 @@ export function initializeWebSocket() {
 
   try {
     logger.debug('Initializing WebSocket connection');
-    sharedWebSocket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:${location.port || '3000'}/ws`);
+    sharedWebSocket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
 
     sharedWebSocket.onopen = () => {
       logger.info('WebSocket connected');
