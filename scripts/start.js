@@ -107,7 +107,7 @@ async function main() {
   processes.push(server);
   
   // Start client preview if it has a build
-  if (hasClientBuild() || hasClientBuild()) {
+  if (hasClientBuild()) {
     await new Promise(resolve => setTimeout(resolve, 1000)); // Give server time to start
     const client = await startClient();
     processes.push(client);

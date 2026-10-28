@@ -21,6 +21,8 @@ const LOG_FILE = path.join(LOG_DIR, 'chagourtee.log');
 const SERVER_DIST = path.join(SERVER_ROOT, 'dist', 'index.js');
 const CLIENT_DIST = path.join(CLIENT_ROOT, 'dist', 'index.html');
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // Load .env files (simple parser, no dotenv dependency)
 function loadEnv(filePath) {
   const env = {};
@@ -214,7 +216,7 @@ function startClient() {
 /**
  * Stop a process by PID file (server) or by port (client)
  */
-function stopProcess(pidFile, name, killPort) {
+async function stopProcess(pidFile, name, killPort) {
   if (killPort) {
     // Port-based stop for client — kill only the npm process group, NOT all processes on the port
     if (!isPortInUse(killPort)) {
@@ -249,8 +251,7 @@ function stopProcess(pidFile, name, killPort) {
         let attempts = 0;
         while (attempts < 30) {
           if (!isPortInUse(killPort)) break;
-          const start = Date.now();
-          while (Date.now() - start < 500) {}
+          await sleep(500);
           attempts++;
         }
         
@@ -277,8 +278,7 @@ function stopProcess(pidFile, name, killPort) {
       let attempts = 0;
       while (attempts < 30) {
         if (!isPortInUse(killPort) || !isProcessRunning(npmPid)) break;
-        const start = Date.now();
-        while (Date.now() - start < 500) {}
+        await sleep(500);
         attempts++;
       }
       
@@ -289,8 +289,7 @@ function stopProcess(pidFile, name, killPort) {
         attempts = 0;
         while (attempts < 10) {
           if (!isPortInUse(killPort)) break;
-          const start = Date.now();
-          while (Date.now() - start < 500) {}
+          await sleep(500);
           attempts++;
         }
       }
@@ -328,8 +327,7 @@ function stopProcess(pidFile, name, killPort) {
     let attempts = 0;
     while (attempts < 10) {
       if (!isProcessRunning(status.pid)) break;
-      const start = Date.now();
-      while (Date.now() - start < 500) {}
+      await sleep(500);
       attempts++;
     }
     
@@ -416,13 +414,13 @@ async function main() {
       break;
     case 'stop':
       // Stop client first, then server
-      stopProcess(PID_FILE_CLIENT, 'Client', 4173);
-      stopProcess(PID_FILE_SERVER, 'Server');
+      await stopProcess(PID_FILE_CLIENT, 'Client', 4173);
+      await stopProcess(PID_FILE_SERVER, 'Server');
       process.exit(0);
       break;
     case 'restart':
-      stopProcess(PID_FILE_CLIENT, 'Client', 4173);
-      stopProcess(PID_FILE_SERVER, 'Server');
+      await stopProcess(PID_FILE_CLIENT, 'Client', 4173);
+      await stopProcess(PID_FILE_SERVER, 'Server');
       // Give ports time to free
       setTimeout(() => {
         const builds = hasBuilds();
