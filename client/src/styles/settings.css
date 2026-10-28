@@ -48,6 +48,22 @@
   flex-direction: column;
 }
 
+@media (min-width: 678px) and (max-width: 876px) {
+  /* На планшете список секций занимает всё доступное место, а нижняя
+     навигация прижимается к нижней границе экрана, как в чате. */
+  .settings-page .nav-sidebar-list,
+  .admin-page .nav-sidebar-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .settings-page .tablet-nav-bottom,
+  .admin-page .tablet-nav-bottom {
+    margin-top: auto;
+  }
+}
+
 .nav-sidebar-item {
   display: flex;
   align-items: center;

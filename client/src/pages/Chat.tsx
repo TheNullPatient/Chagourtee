@@ -285,6 +285,13 @@ export default function Chat() {
   // Track whether user wants to stay at bottom
   const shouldAutoScrollRef = useRef(true);
   const lastReadMessageIdRef = useRef<Record<number, number>>({});
+  const markRoomAsReadRef = useRef<() => void>(() => {});
+  const skipAutoScrollRef = useRef(false);
+  const prevMessagesRef = useRef<{ roomId: number | null; lastId: number | null; count: number }>({
+    roomId: null,
+    lastId: null,
+    count: 0,
+  });
   
   // Store scroll position to preserve it between room switches
   const scrollPositions = useRef<Record<number, number>>({}); // Store scroll position per room
@@ -406,10 +413,7 @@ export default function Chat() {
     if (messagesContainer) {
       const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
       const distanceToBottom = scrollHeight - scrollTop - clientHeight;
-      
-      // Update auto-scroll ref to determine if we should auto-scroll
-      shouldAutoScrollRef.current = distanceToBottom < 100; // Consider "near bottom" if within 100px
-      
+
       // Show button only when:
       // 1. Distance to bottom is greater than 100px (user scrolled up significantly)
       // 2. Container is actually scrollable (content is taller than container)
@@ -424,6 +428,9 @@ export default function Chat() {
     setLoading(true);
     try {
       const { messages: list, first_unread_message_id }: MessageListResponse = await messagesApi.list(id);
+      // Loading a message list is not a new incoming message: never auto-scroll
+      // over a restored position just because the list was replaced.
+      skipAutoScrollRef.current = true;
       setMessages(list);
       setFirstUnreadMessageId(first_unread_message_id ?? null);
       
@@ -469,32 +476,6 @@ export default function Chat() {
     }
   }, [roomId, loadMessages, updateScrollButtonVisibility]);
 
-  // Effect to restore scroll position after messages are rendered
-  useEffect(() => {
-    if (roomId && !loading && messages.length > 0) {
-      // Wait a tick for the DOM to update
-      setTimeout(() => {
-        const messagesContainer = document.querySelector('.chat-messages-wrap');
-        if (messagesContainer && roomId && scrollPositions.current[roomId] !== undefined) {
-          // Restore the saved scroll position for this room
-          messagesContainer.scrollTop = scrollPositions.current[roomId];
-          
-          // Update the scroll button visibility based on the restored position
-          const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
-          const distanceToBottom = scrollHeight - scrollTop - clientHeight;
-          
-          shouldAutoScrollRef.current = distanceToBottom < 100;
-          setShowScrollButton(distanceToBottom > 100 && scrollHeight > clientHeight);
-        } else if (messagesContainer) {
-          // If no saved position, ensure we're at the bottom
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
-          shouldAutoScrollRef.current = true;
-          setShowScrollButton(false);
-        }
-      }, 0);
-    }
-  }, [roomId, loading, messages]);
-
   const markRoomAsRead = useCallback(async () => {
     if (!roomId || messages.length === 0) return;
     const lastMessageId = messages[messages.length - 1]?.id;
@@ -530,6 +511,11 @@ export default function Chat() {
     }
   }, [roomId, messages]);
 
+  // Keep a stable reference for scroll handlers without re-binding listeners
+  useEffect(() => {
+    markRoomAsReadRef.current = markRoomAsRead;
+  }, [markRoomAsRead]);
+
   // When messages change, if user is near the bottom, mark them as read
   useEffect(() => {
     if (!roomId || messages.length === 0) return;
@@ -538,7 +524,7 @@ export default function Chat() {
     const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
     const distanceToBottom = scrollHeight - scrollTop - clientHeight;
     if (distanceToBottom < 40) {
-      markRoomAsRead();
+      void markRoomAsRead();
     }
   }, [roomId, messages, markRoomAsRead]);
 
@@ -1047,7 +1033,13 @@ export default function Chat() {
       // 1. Distance to bottom is greater than 100px (user scrolled up significantly)
       // 2. Container is actually scrollable (content is taller than container)
       setShowScrollButton(distanceToBottom > 100 && scrollHeight > clientHeight);
-      
+
+      // Reaching the bottom means the user has read everything, even if they
+      // scrolled there manually instead of pressing the button.
+      if (distanceToBottom < 40) {
+        void markRoomAsReadRef.current();
+      }
+
       // Store the current scroll position for the room
       if (roomId) {
         scrollPositions.current[roomId] = scrollTop;
@@ -1146,31 +1138,45 @@ export default function Chat() {
     shouldAutoScrollRef.current = true;
     setShowScrollButton(false);
     setTimeout(() => {
-      markRoomAsRead();
-
+      void markRoomAsReadRef.current();
     }, 200);
   };
 
-  // Scroll to bottom when messages change, only if user was already at the bottom and there's a room selected
+  // Follow new incoming messages when the user is already at the bottom.
   useEffect(() => {
-    // Only scroll to bottom if we're supposed to auto-scroll AND it's an addition of new messages
-    // Skip scrolling if we just loaded/reloaded the message list (indicated by loading state)
-    if (roomId && shouldAutoScrollRef.current && !loading) {
-      // Check if the last message is new (not just loaded)
-      const messagesContainer = document.querySelector('.chat-messages-wrap');
-      if (messagesContainer) {
-        const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
-        const isAlreadyNearBottom = (scrollHeight - scrollTop - clientHeight) < 100;
-        
-        // Only scroll to bottom if we were already near bottom before the messages changed
-        if (isAlreadyNearBottom) {
-          // Small delay to ensure DOM is updated
-          setTimeout(() => {
-            scrollToBottom();
-          }, 0);
-        }
-      }
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    const prev = prevMessagesRef.current;
+    prevMessagesRef.current = {
+      roomId,
+      lastId: lastMessage?.id ?? null,
+      count: messages.length,
+    };
+
+    if (skipAutoScrollRef.current) {
+      skipAutoScrollRef.current = false;
+      return;
     }
+
+    // Only react to messages being appended in the same room. Replacing the
+    // whole list (room switch, reconnect) must keep the restored position.
+    const isAppended =
+      prev.roomId === roomId &&
+      messages.length > prev.count &&
+      lastMessage != null &&
+      lastMessage.id !== prev.lastId;
+
+    if (!isAppended || !roomId || loading || !shouldAutoScrollRef.current) {
+      return;
+    }
+
+    const messagesContainer = document.querySelector('.chat-messages-wrap') as HTMLElement | null;
+    if (!messagesContainer) return;
+
+    // Jump straight to the newest message; smooth scrolling lags behind and
+    // leaves the feed above the bottom while new messages keep arriving.
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    setShowScrollButton(false);
+    void markRoomAsReadRef.current();
   }, [messages, roomId, loading]);
 
   useEffect(() => {

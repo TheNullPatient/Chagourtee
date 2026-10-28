@@ -785,8 +785,8 @@ export default function Admin() {
       setDeleteCommentOnApprove(response.deleteCommentOnApprove);
       showToast(
         response.deleteCommentOnApprove
-          ? 'Комментарий будет удаляться после подтверждения'
-          : 'Комментарий будет сохраняться после подтверждения',
+          ? 'Комментарии не будут сохраняться после подтверждения'
+          : 'Комментарии будут сохраняться после подтверждения',
         'success'
       );
     } catch (error) {
@@ -1282,15 +1282,15 @@ export default function Admin() {
                   <label className="admin-toggle-switch">
                     <input
                       type="checkbox"
-                      checked={deleteCommentOnApprove}
+                      checked={!deleteCommentOnApprove}
                       onChange={handleCommentDeletionToggle}
                     />
                     <span className="admin-toggle-slider"></span>
                   </label>
                   <span className="admin-label-text">
                     {deleteCommentOnApprove
-                      ? 'Комментарий удаляется после подтверждения'
-                      : 'Комментарий сохраняется после подтверждения'}
+                      ? 'Комментарии не сохраняются после подтверждения'
+                      : 'Комментарии сохраняются после подтверждения'}
                   </span>
                 </div>
 

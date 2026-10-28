@@ -81,7 +81,8 @@
   margin: 0;
 }
 
-.admin-list-col {
+.admin-list-col,
+.admin-list-col--lg {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -562,6 +563,10 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.admin-toggle-row + .admin-toggle-row {
+  margin-top: 0.75rem;
 }
 
 /* Custom toggle switch (checkbox replacement) */
