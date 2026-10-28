@@ -99,7 +99,7 @@ function formatBytes(size: number): string {
 function LocalFilePreview({ file }: { file: File }) {
   const imageRef = useRef<HTMLImageElement | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!file.type.startsWith('image/')) return;
 
     const objectUrl = URL.createObjectURL(file);
