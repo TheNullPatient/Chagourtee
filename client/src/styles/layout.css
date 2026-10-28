@@ -150,6 +150,15 @@
   margin-left: 0.5rem;
 }
 
+.layout-lock-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+  padding: 0.35rem 0.6rem;
+}
+
 @media (min-width: 679px) {
   .layout-users-button {
     display: none;

@@ -214,6 +214,36 @@ button.chat-room-link:hover {
   }
 }
 
+.chat-header-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.chat-header-lock:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-header-lock:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.chat-header-lock svg {
+  width: 16px;
+  height: 16px;
+}
+
 .chat-messages-wrap {
   flex: 1;
   overflow-y: auto; overflow-x: hidden;

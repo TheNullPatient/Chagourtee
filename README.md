@@ -22,7 +22,8 @@ Self-hosted messenger: the owner runs the server on their computer, creates invi
 - **Message editing**: Ability to edit and delete own messages
 - **Message replies**: Quotes, jump to the original message and a notification for the replied-to user
 - **Room access levels**: Public, password-protected, private and invite-only rooms
-  - The password is requested on every visit; it can be remembered for 5–60 minutes
+  - The password is requested on every visit; it can be remembered for 5 minutes to 1 day, or until a manual lock
+  - A lock button in the room header locks the room manually; owners and moderators can lock it for everyone
 - **Message grouping**: Visual grouping of messages from the same user
 - **Multi-message selection**: For bulk deletion
 
@@ -287,8 +288,9 @@ npm run lint
 - `POST /api/auth/register` – registration (inviteId or bootstrap)
 - `GET/POST/PATCH/DELETE /api/rooms` – rooms (CRUD for the owner)
 - `GET/PUT /api/rooms/:id/members` – access list for private and invite-only rooms
-- `POST /api/rooms/:id/unlock` – enter a password-protected room (`rememberMinutes` 0–60, 0 asks again on every visit)
+- `POST /api/rooms/:id/unlock` – enter a password-protected room (`rememberMinutes`: 0 = ask on every visit, 1–10080 minutes, `null` = never)
 - `DELETE /api/rooms/:id/unlock` – forget the room password immediately
+- `POST /api/rooms/:id/lock` – owner/moderator locks the room for everyone (drops all remembered passwords)
 - `GET /api/rooms/:id/messages`, `POST /api/rooms/:id/messages` – messages
 - `GET/POST/DELETE /api/invites` – invites
 - `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – manual verification

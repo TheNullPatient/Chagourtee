@@ -8,9 +8,10 @@ import { useUserListPanel } from './UserListPanelContext';
 import logoImage from './assets/Images/Chagourtee_512px.png';
 import VersionModal from './components/VersionModal';
 import DisconnectionBanner from './components/DisconnectionBanner';
-import { IconAdmin, IconArrowLeft, IconChat, IconSettings, IconUsers } from './components/icons/Icons';
+import { IconAdmin, IconArrowLeft, IconChat, IconLock, IconSettings, IconUsers } from './components/icons/Icons';
 import { SettingsChromeProvider, useSettingsChrome } from './SettingsChromeContext';
 import { AdminChromeProvider, useAdminChrome } from './AdminChromeContext';
+import { ChatChromeProvider, useChatChrome } from './ChatChromeContext';
 
 function LayoutInner() {
   const { user } = useAuth();
@@ -21,6 +22,7 @@ function LayoutInner() {
   const { isOpen: isUserListOpen, open: openUserList } = useUserListPanel();
   const { chrome: settingsChrome } = useSettingsChrome();
   const { chrome: adminChrome } = useAdminChrome();
+  const { lockAction } = useChatChrome();
 
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 678);
   const [isTabletInRange, setIsTabletInRange] = useState(window.innerWidth >= 678 && window.innerWidth <= 876);
@@ -182,6 +184,20 @@ function LayoutInner() {
             <img src={logoImage} alt="Chagourtee" className="layout-header-logo" />
           </div>
         ) : null}
+        {location.pathname.startsWith('/chat/') && lockAction && (
+          <button
+            type="button"
+            className="layout-lock-button secondary"
+            onClick={lockAction.onLock}
+            title={lockAction.title}
+            aria-label={lockAction.title}
+            disabled={lockAction.busy}
+          >
+            <span className="icon-inline">
+              <IconLock />
+            </span>
+          </button>
+        )}
         {location.pathname.startsWith('/chat/') && (
           <button
             type="button"
@@ -287,7 +303,9 @@ export default function Layout() {
       <DisconnectionBanner />
       <SettingsChromeProvider>
         <AdminChromeProvider>
-          <LayoutInner />
+          <ChatChromeProvider>
+            <LayoutInner />
+          </ChatChromeProvider>
         </AdminChromeProvider>
       </SettingsChromeProvider>
     </div>

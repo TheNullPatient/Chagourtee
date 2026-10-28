@@ -19,7 +19,8 @@ const DEFAULT_ACCESS_LEVEL = 'public';
 const ROOM_PASSWORD_MIN_LENGTH = 4;
 const ROOM_PASSWORD_MAX_LENGTH = 128;
 // How long a user may postpone re-entering a room password (0 = ask on every visit).
-const ROOM_UNLOCK_MAX_MINUTES = 60;
+// `null` is a separate "never" value; the numeric limit only bounds timers.
+const ROOM_UNLOCK_MAX_MINUTES = 7 * 24 * 60;
 // A "do not remember" unlock is revoked as soon as the user leaves the room.
 // This fallback only matters if the socket never reports the leave (crash,
 // killed tab, network loss), so it is deliberately generous.
@@ -214,7 +215,7 @@ function replaceRoomMembers(db, roomId, memberIds, addedBy) {
 }
 
 function clearRoomUnlocks(db, roomId) {
-  db.prepare('DELETE FROM room_unlocks WHERE room_id = ?').run(roomId);
+  return db.prepare('DELETE FROM room_unlocks WHERE room_id = ?').run(roomId);
 }
 
 function getRoomUnlock(db, roomId, userId) {
@@ -226,28 +227,38 @@ function getRoomUnlock(db, roomId, userId) {
     .get(roomId, userId);
 }
 
+/** SQLite-friendly UTC timestamp: "YYYY-MM-DD HH:MM:SS". */
+function toSqlTimestamp(date) {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 /**
- * Stores an unlock for the user. `rememberMinutes` 0 means "ask again on the
- * next visit": such unlock is marked ephemeral and revoked when the user
- * leaves the room. Positive values keep the room open for that many minutes.
+ * Stores an unlock for the user.
+ *  - 0        — ask again on the next visit (revoked when leaving the room);
+ *  - positive — keep the room open for that many minutes;
+ *  - null     — never lock automatically.
  */
 function grantRoomUnlock(db, roomId, userId, { rememberMinutes = 0 } = {}) {
+  const never = rememberMinutes === null;
   const requested = Number(rememberMinutes);
   const minutes =
-    Number.isFinite(requested) && requested > 0
+    !never && Number.isFinite(requested) && requested > 0
       ? Math.min(Math.floor(requested), ROOM_UNLOCK_MAX_MINUTES)
       : 0;
-  const ephemeral = minutes === 0 ? 1 : 0;
+  const ephemeral = !never && minutes === 0 ? 1 : 0;
   const lifetimeMinutes = ephemeral ? EPHEMERAL_UNLOCK_FALLBACK_MINUTES : minutes;
+  const expiresAt = never
+    ? null
+    : toSqlTimestamp(new Date(Date.now() + lifetimeMinutes * 60 * 1000));
 
   db.prepare(
     `INSERT INTO room_unlocks (room_id, user_id, created_at, expires_at, ephemeral)
-     VALUES (?, ?, datetime('now'), datetime('now', ?), ?)
+     VALUES (?, ?, datetime('now'), ?, ?)
      ON CONFLICT(room_id, user_id) DO UPDATE SET
        created_at = datetime('now'),
        expires_at = excluded.expires_at,
        ephemeral = excluded.ephemeral`
-  ).run(roomId, userId, `+${lifetimeMinutes} minutes`, ephemeral);
+  ).run(roomId, userId, expiresAt, ephemeral);
 
   return getRoomUnlock(db, roomId, userId);
 }

@@ -344,12 +344,12 @@ export const rooms = {
       method: 'PUT',
       body: JSON.stringify({ memberIds }),
     }),
-  unlock: (id: number, password: string, rememberMinutes = 0) =>
+  unlock: (id: number, password: string, rememberMinutes: number | null = 0) =>
     api<{
       ok: boolean;
       unlocked: boolean;
       privileged?: boolean;
-      rememberMinutes?: number;
+      rememberMinutes?: number | null;
       ephemeral?: boolean;
       expiresAt?: string | null;
     }>(`/api/rooms/${id}/unlock`, {
@@ -359,6 +359,10 @@ export const rooms = {
   lock: (id: number) =>
     api<{ ok: boolean; unlocked: boolean }>(`/api/rooms/${id}/unlock`, {
       method: 'DELETE',
+    }),
+  lockAll: (id: number) =>
+    api<{ ok: boolean; lockedUsers: number }>(`/api/rooms/${id}/lock`, {
+      method: 'POST',
     }),
 };
 

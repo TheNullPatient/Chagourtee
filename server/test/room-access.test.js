@@ -311,14 +311,40 @@ test('room access levels control visibility, joining and messages', async () => 
       JSON.stringify(rememberedRow)
     );
 
+    // "Never" keeps the room open until the user (or an admin) locks it.
+    const neverUnlock = await request(
+      'POST',
+      `/api/rooms/${closedRoom.id}/unlock`,
+      outsider,
+      { password: 'secret-pass', rememberMinutes: null }
+    );
+    check(
+      'unlock accepts the "never" option',
+      neverUnlock.statusCode === 200 &&
+        neverUnlock.json().rememberMinutes === null &&
+        neverUnlock.json().expiresAt === null &&
+        neverUnlock.json().ephemeral === false,
+      neverUnlock.body
+    );
+    const neverRow = db
+      .prepare(
+        'SELECT expires_at, ephemeral FROM room_unlocks WHERE room_id = ? AND user_id = ?'
+      )
+      .get(closedRoom.id, outsider);
+    check(
+      'the "never" option is stored without an expiry',
+      neverRow?.expires_at === null && neverRow?.ephemeral === 0,
+      JSON.stringify(neverRow)
+    );
+
     const tooLong = await request(
       'POST',
       `/api/rooms/${closedRoom.id}/unlock`,
       outsider,
-      { password: 'secret-pass', rememberMinutes: 61 }
+      { password: 'secret-pass', rememberMinutes: 10081 }
     );
     check(
-      'remember duration cannot exceed one hour',
+      'remember duration cannot exceed seven days',
       tooLong.statusCode === 400,
       tooLong.body
     );
@@ -376,6 +402,43 @@ test('room access levels control visibility, joining and messages', async () => 
       'a manual lock revokes access immediately',
       afterManualLockRead.statusCode === 403,
       afterManualLockRead.body
+    );
+
+    // Restore the unlock so the admin lock-all checks below have a target.
+    await request('POST', `/api/rooms/${closedRoom.id}/unlock`, outsider, {
+      password: 'secret-pass',
+      rememberMinutes: 120,
+    });
+
+    const lockAll = await request('POST', `/api/rooms/${closedRoom.id}/lock`, owner, {});
+    check('owner can lock the room for everyone', lockAll.statusCode === 200, lockAll.body);
+    check(
+      'lock-all reports how many users were locked out',
+      lockAll.json().lockedUsers >= 1,
+      lockAll.body
+    );
+
+    const afterLockAllRead = await request(
+      'GET',
+      `/api/rooms/${closedRoom.id}/messages`,
+      outsider
+    );
+    check(
+      'lock-all drops remembered passwords for everyone',
+      afterLockAllRead.statusCode === 403,
+      afterLockAllRead.body
+    );
+
+    const memberLockAll = await request(
+      'POST',
+      `/api/rooms/${closedRoom.id}/lock`,
+      member,
+      {}
+    );
+    check(
+      'regular members cannot lock the room for everyone',
+      memberLockAll.statusCode === 403,
+      memberLockAll.body
     );
 
     // Restore the unlock so the password-change checks below stay meaningful.

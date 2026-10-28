@@ -29,16 +29,22 @@ import { saveAs } from 'file-saver';
 import { TabletBottomNav } from '../components/TabletBottomNav';
 import { IconHome, IconLock, IconUsers } from '../components/icons/Icons';
 import { errorTranslations } from '../localization/errors';
+import { useChatChrome } from '../ChatChromeContext';
 
 // How long the user may skip re-entering a room password. 0 = ask on every visit.
-const UNLOCK_REMEMBER_OPTIONS = [
+const UNLOCK_REMEMBER_OPTIONS: Array<{ value: number | null; label: string }> = [
   { value: 0, label: 'Спрашивать каждый раз' },
   { value: 5, label: '5 минут' },
   { value: 15, label: '15 минут' },
   { value: 30, label: '30 минут' },
   { value: 60, label: '1 час' },
-] as const;
+  { value: 120, label: '2 часа' },
+  { value: 300, label: '5 часов' },
+  { value: 1440, label: '1 день' },
+  { value: null, label: 'Никогда' },
+];
 const UNLOCK_REMEMBER_STORAGE_KEY = 'chagourtee:roomUnlockRemember';
+const UNLOCK_REMEMBER_NEVER = 'never';
 
 // Errors returned by the server when the room access was lost (e.g. a
 // remembered password expired while the room was open).
@@ -225,10 +231,13 @@ export default function Chat() {
   const [roomsLoaded, setRoomsLoaded] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlocking, setUnlocking] = useState(false);
-  const [unlockRememberMinutes, setUnlockRememberMinutes] = useState<number>(() => {
+  const [lockingRoom, setLockingRoom] = useState(false);
+  const [unlockRememberMinutes, setUnlockRememberMinutes] = useState<number | null>(() => {
     try {
-      const stored = Number(localStorage.getItem(UNLOCK_REMEMBER_STORAGE_KEY));
-      return UNLOCK_REMEMBER_OPTIONS.some((option) => option.value === stored) ? stored : 0;
+      const stored = localStorage.getItem(UNLOCK_REMEMBER_STORAGE_KEY);
+      if (stored === UNLOCK_REMEMBER_NEVER) return null;
+      const value = Number(stored);
+      return UNLOCK_REMEMBER_OPTIONS.some((option) => option.value === value) ? value : 0;
     } catch {
       return 0;
     }
@@ -243,6 +252,7 @@ export default function Chat() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const { user } = useAuth();
+  const { setLockAction } = useChatChrome();
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
     x: number;
@@ -459,6 +469,10 @@ export default function Chat() {
   const activeRoomLocked = Boolean(activeRoom?.locked);
   const activeRoomMissing = roomsLoaded && Boolean(roomId) && !activeRoom;
   const canJoinRoom = roomsLoaded && activeRoomId !== null && !activeRoomLocked;
+  const isPrivilegedUser = user?.role === 'owner' || user?.role === 'moderator';
+  // Locking only makes sense for password-protected rooms the user is inside.
+  const canLockRoom =
+    Boolean(roomId) && activeRoom?.access_level === 'closed' && !activeRoomLocked;
 
   // Function to update scroll button visibility based on scroll position
   const updateScrollButtonVisibility = useCallback(() => {
@@ -604,14 +618,84 @@ export default function Chat() {
     }
   };
 
-  const handleUnlockRememberChange = (value: number) => {
+  const handleUnlockRememberChange = (value: number | null) => {
     setUnlockRememberMinutes(value);
     try {
-      localStorage.setItem(UNLOCK_REMEMBER_STORAGE_KEY, String(value));
+      localStorage.setItem(
+        UNLOCK_REMEMBER_STORAGE_KEY,
+        value === null ? UNLOCK_REMEMBER_NEVER : String(value)
+      );
     } catch {
       // Private mode may block storage; the choice still works for this visit.
     }
   };
+
+  const lockRoom = useCallback(
+    async (forEveryone: boolean) => {
+      if (!roomId) return;
+      setLockingRoom(true);
+      try {
+        if (forEveryone) {
+          await roomsApi.lockAll(roomId);
+          showToast('Комната заблокирована для всех', 'success');
+        } else {
+          await roomsApi.lock(roomId);
+          ephemeralUnlockedRoomsRef.current.delete(roomId);
+          showToast('Комната заблокирована', 'success');
+        }
+        setUnlockPassword('');
+        await loadRooms();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Не удалось заблокировать комнату';
+        showToast(errorTranslations[message] || message, 'error');
+      } finally {
+        setLockingRoom(false);
+      }
+    },
+    [roomId, loadRooms, showToast]
+  );
+
+  const handleLockRoom = useCallback(() => {
+    if (!roomId || lockingRoom) return;
+
+    // Privileged users bypass the password, so for them the button locks the
+    // room for everyone instead of just themselves.
+    if (isPrivilegedUser) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'Заблокировать комнату для всех?',
+        message:
+          'Все пользователи потеряют доступ к комнате и должны будут снова ввести пароль.',
+        confirmText: 'Заблокировать',
+        cancelText: 'Отмена',
+        variant: 'warning',
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          void lockRoom(true);
+        },
+      });
+      return;
+    }
+
+    void lockRoom(false);
+  }, [roomId, lockingRoom, isPrivilegedUser, lockRoom, setConfirmModal]);
+
+  // Expose the lock button in the mobile/tablet header rendered by Layout.
+  useEffect(() => {
+    if (!canLockRoom) {
+      setLockAction(null);
+      return;
+    }
+    setLockAction({
+      title: isPrivilegedUser
+        ? 'Заблокировать комнату для всех'
+        : 'Заблокировать комнату',
+      busy: lockingRoom,
+      onLock: handleLockRoom,
+    });
+    return () => setLockAction(null);
+  }, [canLockRoom, isPrivilegedUser, lockingRoom, handleLockRoom, setLockAction]);
 
   const markRoomAsRead = useCallback(async () => {
     if (!roomId || activeRoomLocked || !activeRoomId || messages.length === 0) return;
@@ -2314,11 +2398,28 @@ export default function Chat() {
                       <label className="chat-unlock-remember">
                         <span>Запоминать пароль:</span>
                         <select
-                          value={unlockRememberMinutes}
-                          onChange={(e) => handleUnlockRememberChange(Number(e.target.value))}
+                          value={
+                            unlockRememberMinutes === null
+                              ? UNLOCK_REMEMBER_NEVER
+                              : String(unlockRememberMinutes)
+                          }
+                          onChange={(e) =>
+                            handleUnlockRememberChange(
+                              e.target.value === UNLOCK_REMEMBER_NEVER
+                                ? null
+                                : Number(e.target.value)
+                            )
+                          }
                         >
                           {UNLOCK_REMEMBER_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
+                            <option
+                              key={option.label}
+                              value={
+                                option.value === null
+                                  ? UNLOCK_REMEMBER_NEVER
+                                  : String(option.value)
+                              }
+                            >
                               {option.label}
                             </option>
                           ))}
@@ -2341,6 +2442,28 @@ export default function Chat() {
                 <Marquee>
                   {roomList.find((r) => r.id === roomId)?.name ?? 'Чат'}
                 </Marquee>
+                {canLockRoom && (
+                  <button
+                    type="button"
+                    className="chat-header-lock"
+                    onClick={handleLockRoom}
+                    disabled={lockingRoom}
+                    title={
+                      isPrivilegedUser
+                        ? 'Заблокировать комнату для всех'
+                        : 'Заблокировать комнату'
+                    }
+                    aria-label={
+                      isPrivilegedUser
+                        ? 'Заблокировать комнату для всех'
+                        : 'Заблокировать комнату'
+                    }
+                  >
+                    <span className="icon-inline" aria-hidden>
+                      <IconLock />
+                    </span>
+                  </button>
+                )}
               </div>
               <div 
                 className={`chat-messages-wrap ${isDragOver ? 'drag-over' : ''}`}

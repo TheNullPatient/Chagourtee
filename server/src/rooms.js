@@ -366,15 +366,17 @@ module.exports = function (fastify) {
       return reply.code(400).send({ error: 'Room does not require a password' });
     }
 
-    // 0 = ask again on the next visit, up to ROOM_UNLOCK_MAX_MINUTES.
+    // 0 = ask again on the next visit, a positive number of minutes, or null
+    // for "never lock automatically".
     const rawRemember = request.body?.rememberMinutes;
     const rememberMinutes = rawRemember === undefined ? 0 : rawRemember;
-    if (
-      typeof rememberMinutes !== 'number' ||
-      !Number.isInteger(rememberMinutes) ||
-      rememberMinutes < 0 ||
-      rememberMinutes > ROOM_UNLOCK_MAX_MINUTES
-    ) {
+    const validRemember =
+      rememberMinutes === null ||
+      (typeof rememberMinutes === 'number' &&
+        Number.isInteger(rememberMinutes) &&
+        rememberMinutes >= 0 &&
+        rememberMinutes <= ROOM_UNLOCK_MAX_MINUTES);
+    if (!validRemember) {
       return reply.code(400).send({ error: 'Invalid remember duration' });
     }
 
@@ -422,6 +424,26 @@ module.exports = function (fastify) {
     if (!room) return reply.code(404).send({ error: 'Room not found' });
     revokeRoomUnlock(db, id, request.session.userId);
     return { ok: true, unlocked: false };
+  });
+
+  // Owners and moderators can lock the room for everyone: all remembered
+  // passwords are dropped, so each user has to enter the password again.
+  fastify.post('/api/rooms/:id/lock', {
+    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+  }, async (request, reply) => {
+    const id = Number(request.params.id);
+    const room = getRoom(db, id);
+    if (!room) return reply.code(404).send({ error: 'Room not found' });
+    if (normalizeAccessLevel(room.access_level) !== 'closed') {
+      return reply.code(400).send({ error: 'Room does not require a password' });
+    }
+
+    const result = clearRoomUnlocks(db, id);
+    if (fastify.broadcastRoomsChanged) {
+      fastify.broadcastRoomsChanged();
+    }
+
+    return { ok: true, lockedUsers: result.changes };
   });
 
   fastify.delete('/api/rooms/:id', {
