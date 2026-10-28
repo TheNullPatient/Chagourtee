@@ -154,6 +154,14 @@ export type MediaStorageSettings = {
   filesCount: number;
 };
 
+export type MessageReply = {
+  id: number | null;
+  userId: number | null;
+  login: string;
+  body: string;
+  deleted: boolean;
+};
+
 export type Message = {
   id: number;
   room_id: number;
@@ -165,6 +173,7 @@ export type Message = {
   login: string;
   is_read?: 0 | 1;
   media?: MediaFile[]; // Optional array of media files attached to the message
+  replyTo?: MessageReply | null;
 };
 
 export type MessageListResponse = {
@@ -306,10 +315,10 @@ export const messages = {
       `/api/rooms/${roomId}/messages${q ? `?${q}` : ''}`
     );
   },
-  send: (roomId: number, body: string, media_ids?: number[], mediaPosition?: 'above' | 'below') =>
+  send: (roomId: number, body: string, media_ids?: number[], mediaPosition?: 'above' | 'below', replyToMessageId?: number | null) =>
     api<Message>(`/api/rooms/${roomId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ body, media_ids, mediaPosition }),
+      body: JSON.stringify({ body, media_ids, mediaPosition, replyToMessageId }),
     }),
   edit: (messageId: number, roomId: number, body: string, media_ids?: number[], mediaPosition?: 'above' | 'below') =>
     api<Message>(`/api/rooms/${roomId}/messages/${messageId}`, {

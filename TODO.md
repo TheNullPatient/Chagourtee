@@ -126,11 +126,11 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 ### 5. Enhanced User Interactions
 
 #### 5.1. Message Replies
-- [ ] Add reply functionality to message context menu in [Chat.tsx](./client/src/pages/Chat.tsx)
-- [ ] Implement quoted message display in replies
-- [ ] Add automatic ping/mention to replied-to user
-- [ ] Create visual hierarchy for reply chains
-- [ ] Implement scroll-to-original-message functionality when clicking quotes
+- [x] Add reply functionality to message context menu in [Chat.tsx](./client/src/pages/Chat.tsx)
+- [x] Implement quoted message display in replies
+- [x] Add automatic ping/mention to replied-to user
+- [x] Create visual hierarchy for reply chains
+- [x] Implement scroll-to-original-message functionality when clicking quotes
 
 #### 5.2. Mention Notifications
 - [ ] Add indicator for unseen mentions when scrolled down
@@ -189,7 +189,7 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 1. Enhanced File Handling (especially media size validation and error handling) — ✅ **Done**
 2. Code Quality Improvements (replace alerts and centralize styles) — ✅ **Done** (alerts и confirm заменены на Toast/ConfirmModal, CSS разбит на модули)
 3. Basic HTTPS/WSS implementation
-4. Message Replies functionality
+4. Message Replies functionality — ✅ **Done**
 5. Room access levels (at least basic implementation)
 
 ### Medium Priority (Would be nice for v0.4.0-alpha)

@@ -18,6 +18,79 @@ const rateLimitCleanup = setInterval(() => {
 }, 30000); // Clean up every 30 seconds
 rateLimitCleanup.unref();
 
+const REPLY_FIELDS = [
+  'reply_to_message_id',
+  'reply_to_user_id',
+  'reply_to_body',
+  'reply_to_login',
+];
+
+/**
+ * Replaces the reply snapshot columns with a single `replyTo` object.
+ * Live parent messages win, so an edited original is quoted in its current
+ * form; snapshots keep the quote readable after the original is deleted.
+ */
+function attachReplyInfo(db, messages) {
+  if (messages.length === 0) return messages;
+
+  const replyIds = [
+    ...new Set(
+      messages
+        .map((message) => message.reply_to_message_id)
+        .filter((id) => Number.isInteger(id))
+    ),
+  ];
+
+  const parents = new Map();
+  if (replyIds.length > 0) {
+    const placeholders = replyIds.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT m.id, m.body, m.user_id, u.login
+         FROM messages m
+         JOIN users u ON u.id = m.user_id
+         WHERE m.id IN (${placeholders})`
+      )
+      .all(...replyIds);
+    for (const row of rows) parents.set(Number(row.id), row);
+  }
+
+  for (const message of messages) {
+    const hasSnapshot =
+      message.reply_to_message_id != null ||
+      message.reply_to_body != null ||
+      message.reply_to_login != null;
+
+    if (!hasSnapshot) {
+      message.replyTo = null;
+    } else {
+      const parent =
+        message.reply_to_message_id != null
+          ? parents.get(Number(message.reply_to_message_id))
+          : null;
+
+      message.replyTo = {
+        id:
+          message.reply_to_message_id != null
+            ? Number(message.reply_to_message_id)
+            : null,
+        userId: parent
+          ? Number(parent.user_id)
+          : message.reply_to_user_id != null
+            ? Number(message.reply_to_user_id)
+            : null,
+        login: parent ? parent.login : message.reply_to_login || '',
+        body: parent ? parent.body : message.reply_to_body || '',
+        deleted: !parent,
+      };
+    }
+
+    for (const field of REPLY_FIELDS) delete message[field];
+  }
+
+  return messages;
+}
+
 module.exports = function (fastify) {
   const db = fastify.db;
 
@@ -37,6 +110,7 @@ module.exports = function (fastify) {
     if (before) {
       rows = db.prepare(`
         SELECT m.id, m.room_id, m.user_id, m.body, m.media_position as mediaPosition, m.created_at, m.updated_at, u.login,
+               m.reply_to_message_id, m.reply_to_user_id, m.reply_to_body, m.reply_to_login,
                CASE WHEN mr.user_id IS NULL THEN 0 ELSE 1 END AS is_read,
                mf.id as media_id, mf.original_name, mf.encrypted_filename, mf.mime_type, mf.file_size
         FROM messages m
@@ -50,6 +124,7 @@ module.exports = function (fastify) {
     } else {
       rows = db.prepare(`
         SELECT m.id, m.room_id, m.user_id, m.body, m.media_position as mediaPosition, m.created_at, m.updated_at, u.login,
+               m.reply_to_message_id, m.reply_to_user_id, m.reply_to_body, m.reply_to_login,
                CASE WHEN mr.user_id IS NULL THEN 0 ELSE 1 END AS is_read,
                mf.id as media_id, mf.original_name, mf.encrypted_filename, mf.mime_type, mf.file_size
         FROM messages m
@@ -114,6 +189,8 @@ module.exports = function (fastify) {
 
     const first_unread_message_id = firstUnreadRow ? firstUnreadRow.first_unread_id : null;
 
+    attachReplyInfo(db, groupedRows);
+
     return { messages: groupedRows, first_unread_message_id };
   });
 
@@ -121,7 +198,7 @@ module.exports = function (fastify) {
     preHandler: [fastify.requireAuth],
   }, async (request, reply) => {
     const roomId = Number(request.params.roomId);
-    const { body, media_ids, mediaPosition } = request.body || {};
+    const { body, media_ids, mediaPosition, replyToMessageId } = request.body || {};
     
     // Either body or media_ids must be present
     if ((!body || !String(body).trim()) && (!media_ids || !Array.isArray(media_ids) || media_ids.length === 0)) {
@@ -153,14 +230,39 @@ module.exports = function (fastify) {
     const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
 
+    let replyTarget = null;
+    if (replyToMessageId !== undefined && replyToMessageId !== null) {
+      const targetId = Number(replyToMessageId);
+      if (!Number.isInteger(targetId) || targetId <= 0) {
+        return reply.code(400).send({ error: 'Invalid replyToMessageId' });
+      }
+      replyTarget = db
+        .prepare(
+          `SELECT m.id, m.user_id, m.body, u.login
+           FROM messages m
+           JOIN users u ON u.id = m.user_id
+           WHERE m.id = ? AND m.room_id = ?`
+        )
+        .get(targetId, roomId);
+      if (!replyTarget) {
+        return reply.code(400).send({ error: 'Reply target not found in this room' });
+      }
+    }
+
     // Insert the message
     const result = db.prepare(
-      'INSERT INTO messages (room_id, user_id, body, media_position) VALUES (?, ?, ?, ?)'
+      `INSERT INTO messages
+         (room_id, user_id, body, media_position, reply_to_message_id, reply_to_user_id, reply_to_body, reply_to_login)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       roomId,
       request.session.userId,
       String(body || '').trim(),
-      mediaPosition === 'above' || mediaPosition === 'below' ? mediaPosition : null
+      mediaPosition === 'above' || mediaPosition === 'below' ? mediaPosition : null,
+      replyTarget ? replyTarget.id : null,
+      replyTarget ? replyTarget.user_id : null,
+      replyTarget ? replyTarget.body : null,
+      replyTarget ? replyTarget.login : null
     );
     
     const messageId = result.lastInsertRowid;
@@ -178,6 +280,7 @@ module.exports = function (fastify) {
     // Get the created message with media
     const msg = db.prepare(`
       SELECT m.id, m.room_id, m.user_id, m.body, m.media_position as mediaPosition, m.created_at, m.updated_at, u.login,
+             m.reply_to_message_id, m.reply_to_user_id, m.reply_to_body, m.reply_to_login,
              mf.id as media_id, mf.original_name, mf.encrypted_filename, mf.mime_type, mf.file_size
       FROM messages m
       JOIN users u ON u.id = m.user_id
@@ -204,6 +307,8 @@ module.exports = function (fastify) {
     delete fullMessage.encrypted_filename;
     delete fullMessage.mime_type;
     delete fullMessage.file_size;
+
+    attachReplyInfo(db, [fullMessage]);
 
     // Mark author's own message as read for them
     try {
@@ -245,6 +350,7 @@ module.exports = function (fastify) {
         userId: fullMessage.user_id,
         login: fullMessage.login,
         preview,
+        replyToUserId: fullMessage.replyTo?.userId ?? null,
         created_at: fullMessage.created_at,
       });
     }
@@ -384,6 +490,7 @@ module.exports = function (fastify) {
     // Get updated message with media
     const updatedMsg = db.prepare(`
       SELECT m.id, m.room_id, m.user_id, m.body, m.media_position as mediaPosition, m.created_at, m.updated_at, u.login,
+             m.reply_to_message_id, m.reply_to_user_id, m.reply_to_body, m.reply_to_login,
              mf.id as media_id, mf.original_name, mf.encrypted_filename, mf.mime_type, mf.file_size
       FROM messages m
       JOIN users u ON u.id = m.user_id
@@ -410,6 +517,13 @@ module.exports = function (fastify) {
     delete fullUpdatedMessage.encrypted_filename;
     delete fullUpdatedMessage.mime_type;
     delete fullUpdatedMessage.file_size;
+
+    // Keep quotes of this message in sync even after the original is deleted.
+    db.prepare(
+      'UPDATE messages SET reply_to_body = ?, reply_to_login = ? WHERE reply_to_message_id = ?'
+    ).run(updatedMsg.body, updatedMsg.login, messageId);
+
+    attachReplyInfo(db, [fullUpdatedMessage]);
 
     // Broadcast update to all room participants
     if (process.env.DEBUG_MODE === 'true') {

@@ -1330,6 +1330,122 @@ button.chat-room-link:hover {
   white-space: pre-wrap;
 }
 
+.chat-reply-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: 100%;
+  margin: 0 0 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.chat-reply-quote:hover {
+  background: var(--bg-tertiary);
+  transform: none;
+}
+
+.chat-reply-quote:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.chat-reply-quote-author {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.chat-reply-quote-text {
+  overflow: hidden;
+  font-size: 0.85rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-reply-quote--deleted {
+  border-left-color: var(--text-muted);
+}
+
+.chat-reply-quote--deleted .chat-reply-quote-author {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.chat-message-highlight {
+  animation: reply-target-highlight 1.6s ease;
+}
+
+@keyframes reply-target-highlight {
+  0% {
+    background: var(--accent-light);
+  }
+
+  100% {
+    background: var(--bg-elevated);
+  }
+}
+
+.reply-compose-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1.25rem;
+  border-top: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-elevated);
+}
+
+.reply-compose-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.reply-compose-label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.reply-compose-label strong {
+  color: var(--accent);
+}
+
+.reply-compose-text {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.85rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-compose-cancel {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.reply-compose-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .chat-message-wrapper {
   display: flex;
   flex-direction: column;

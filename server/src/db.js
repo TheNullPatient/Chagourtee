@@ -60,6 +60,10 @@ function createDb(dbPath) {
       user_id INTEGER NOT NULL REFERENCES users(id),
       body TEXT NOT NULL,
       media_position TEXT,
+      reply_to_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+      reply_to_user_id INTEGER,
+      reply_to_body TEXT,
+      reply_to_login TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT
     );
@@ -220,9 +224,24 @@ function createDb(dbPath) {
     if (!messageColumns.includes('updated_at')) {
       db.exec('ALTER TABLE messages ADD COLUMN updated_at DATETIME DEFAULT NULL');
     }
+    if (!messageColumns.includes('reply_to_message_id')) {
+      db.exec(
+        'ALTER TABLE messages ADD COLUMN reply_to_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL'
+      );
+    }
+    if (!messageColumns.includes('reply_to_user_id')) {
+      db.exec('ALTER TABLE messages ADD COLUMN reply_to_user_id INTEGER');
+    }
+    if (!messageColumns.includes('reply_to_body')) {
+      db.exec('ALTER TABLE messages ADD COLUMN reply_to_body TEXT');
+    }
+    if (!messageColumns.includes('reply_to_login')) {
+      db.exec('ALTER TABLE messages ADD COLUMN reply_to_login TEXT');
+    }
 
     // This index depends on updated_at, which old databases may not have yet.
     db.exec('CREATE INDEX IF NOT EXISTS idx_messages_updated_at ON messages(updated_at)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON messages(reply_to_message_id)');
   } catch (e) {
     console.error('Failed to ensure messages schema is up to date:', e);
   }

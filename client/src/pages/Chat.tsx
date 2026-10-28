@@ -93,6 +93,14 @@ function formatBytes(size: number): string {
   return `${size} Б`;
 }
 
+function formatReplyPreview(body: string, maxLength = 120): string {
+  const normalized = body.replace(/\s+/g, ' ').trim();
+  if (!normalized) return 'Вложение';
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 1)}…`
+    : normalized;
+}
+
 /**
  * Preview for a file selected from disk.
  *
@@ -199,6 +207,7 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [sendText, setSendText] = useState('');
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
   const { user } = useAuth();
@@ -462,6 +471,7 @@ export default function Chat() {
   }, [loadRooms]);
 
   useEffect(() => {
+    setReplyingTo(null);
     if (roomId) {
       loadMessages(roomId);
     }
@@ -600,7 +610,9 @@ export default function Chat() {
             const hasAllMention =
               bodyForDetection &&
               /(^|\s)@(all|here)(\b|\s|$)/i.test(bodyForDetection);
-            const isMentionForUser = !!(hasDirectMention || hasAllMention);
+            const isReplyToUser =
+              data.replyToUserId != null && Number(data.replyToUserId) === user.id;
+            const isMentionForUser = !!(hasDirectMention || hasAllMention || isReplyToUser);
 
             if (isMentionForUser) {
               // Add the room to mentioned rooms to trigger flash animation
@@ -764,7 +776,8 @@ export default function Chat() {
               const hasDirectMention =
                 new RegExp(`(^|\\s)@${login}(\\b|\\s|$)`).test(body);
               const hasAllMention = /(^|\s)@(all|here)(\b|\s|$)/i.test(body);
-              const isMentionForUser = hasDirectMention || hasAllMention;
+              const isReplyToUser = data.message?.replyTo?.userId === user.id;
+              const isMentionForUser = hasDirectMention || hasAllMention || isReplyToUser;
 
               if (isMentionForUser) {
                 // Add the message to mentioned messages to trigger flash animation
@@ -793,7 +806,8 @@ export default function Chat() {
               const hasDirectMention =
                 new RegExp(`(^|\\s)@${login}(\\b|\\s|$)`).test(body);
               const hasAllMention = /(^|\s)@(all|here)(\b|\s|$)/i.test(body);
-              const isMentionForUser = hasDirectMention || hasAllMention;
+              const isReplyToUser = data.message?.replyTo?.userId === user.id;
+              const isMentionForUser = hasDirectMention || hasAllMention || isReplyToUser;
 
               if (isMentionForUser) {
                 playMention();
@@ -822,9 +836,21 @@ export default function Chat() {
           logger.debug('Processing message update:', data.message);
           // Only update if this is not from the current user (to avoid duplicate updates)
           setMessages(prev => 
-            prev.map(msg => 
-              msg.id === data.message.id ? data.message : msg
-            )
+            prev.map(msg => {
+              if (msg.id === data.message.id) return data.message;
+              if (msg.replyTo?.id === data.message.id) {
+                return {
+                  ...msg,
+                  replyTo: {
+                    ...msg.replyTo,
+                    body: data.message.body,
+                    login: data.message.login,
+                    userId: data.message.user_id,
+                  },
+                };
+              }
+              return msg;
+            })
           );
           break;
           
@@ -832,8 +858,14 @@ export default function Chat() {
           // Remove the message from the list
           logger.debug('Processing message deletion:', data.messageId);
           setMessages(prev => 
-            prev.filter(msg => msg.id !== data.messageId)
+            prev
+              .filter(msg => msg.id !== data.messageId)
+              .map(msg => {
+                if (!msg.replyTo || msg.replyTo.id !== data.messageId) return msg;
+                return { ...msg, replyTo: { ...msg.replyTo, id: null, deleted: true } };
+              })
           );
+          setReplyingTo(prev => (prev?.id === data.messageId ? null : prev));
           setEditingMessage(prev => prev?.id === data.messageId ? null : prev);
           
           // After deleting a message, update the scroll button visibility
@@ -845,8 +877,20 @@ export default function Chat() {
           if (Array.isArray(data.messageIds)) {
             logger.debug('Processing multiple message deletion:', data.messageIds);
             setMessages(prev => 
-              prev.filter(msg => !data.messageIds.includes(msg.id))
+              prev
+                .filter(msg => !data.messageIds.includes(msg.id))
+                .map(msg => {
+                  if (
+                    !msg.replyTo ||
+                    msg.replyTo.id == null ||
+                    !data.messageIds.includes(msg.replyTo.id)
+                  ) {
+                    return msg;
+                  }
+                  return { ...msg, replyTo: { ...msg.replyTo, id: null, deleted: true } };
+                })
             );
+            setReplyingTo(prev => (prev && data.messageIds.includes(prev.id) ? null : prev));
             setEditingMessage(prev => prev && data.messageIds.includes(prev.id) ? null : prev);
             
             // After deleting messages, update the scroll button visibility
@@ -1102,6 +1146,11 @@ export default function Chat() {
         }
       }
 
+      const replyComposePreview = document.querySelector('.reply-compose-preview') as HTMLElement;
+      if (replyComposePreview) {
+        bottomPosition += replyComposePreview.offsetHeight;
+      }
+
       // Apply the calculated position
       scrollButton.style.bottom = `${bottomPosition}px`;
     });
@@ -1121,15 +1170,17 @@ export default function Chat() {
 
     const selectedFilesPreview = document.querySelector('.selected-files-preview');
     const editingPanel = document.querySelector('.editing-panel');
+    const replyComposePreview = document.querySelector('.reply-compose-preview');
     
     if (selectedFilesPreview) resizeObserver.observe(selectedFilesPreview);
     if (editingPanel) resizeObserver.observe(editingPanel);
+    if (replyComposePreview) resizeObserver.observe(replyComposePreview);
 
     // Clean up observer on unmount
     return () => {
       resizeObserver.disconnect();
     };
-  }, [adjustScrollButtonPosition, selectedFiles.length, editingMessage]);
+  }, [adjustScrollButtonPosition, selectedFiles.length, editingMessage, replyingTo]);
 
   // Scroll to bottom function
   const scrollToBottom = () => {
@@ -1488,7 +1539,13 @@ export default function Chat() {
       const mediaIds = hasFiles ? await uploadSelectedFiles() : [];
       
       // Send message with or without media and chosen media position
-      const newMessage = await messagesApi.send(roomId, text, mediaIds, mediaPositionDraft);
+      const newMessage = await messagesApi.send(
+        roomId,
+        text,
+        mediaIds,
+        mediaPositionDraft,
+        replyingTo?.id ?? null
+      );
       
       // Optimistically add the new message so the author sees it immediately
       setMessages((prev) => {
@@ -1499,6 +1556,7 @@ export default function Chat() {
         return [...prev, msgWithRead];
       });
       
+      setReplyingTo(null);
       playSent();
       
       // Ensure we scroll to the bottom after adding the new message
@@ -1753,6 +1811,7 @@ export default function Chat() {
   // Handle editing message
   const startEditingMessage = (message: Message | null) => {
     if (!message) return;
+    setReplyingTo(null);
     setEditingMessage({ 
       id: message.id, 
       body: message.body, 
@@ -1877,6 +1936,32 @@ export default function Chat() {
         adjustTextareaHeight();
       }, 0);
     }
+  };
+
+  const startReplyingTo = (message: Message) => {
+    if (editingMessage) {
+      cancelEditing();
+    }
+    setReplyingTo(message);
+    hideContextMenu();
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  };
+
+  const scrollToMessage = (messageId: number) => {
+    const element = document.querySelector(
+      `[data-message-id="${messageId}"]`
+    ) as HTMLElement | null;
+
+    if (!element) {
+      showToast('Исходное сообщение не загружено', 'error');
+      return;
+    }
+
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    element.classList.add('chat-message-highlight');
+    setTimeout(() => {
+      element.classList.remove('chat-message-highlight');
+    }, 1600);
   };
 
   // Handle deleting a single message
@@ -2061,6 +2146,7 @@ export default function Chat() {
                           </div>
                         )}
                         <div
+                        data-message-id={m.id}
                         className={`chat-message ${shouldHideAuthor ? 'grouped-message' : 'has-author'} ${isSelected ? 'selected' : ''} ${(canEditMessage(m) || canDeleteMessage(m)) ? 'editable' : ''} ${mentionedMessages.has(m.id) ? 'mention-flash' : ''}`}
                         onContextMenu={(e) => {
                           e.preventDefault();
@@ -2131,6 +2217,27 @@ export default function Chat() {
                                 </span>
                               )}
                             </div>
+                          )}
+                          {m.replyTo && (
+                            <button
+                              type="button"
+                              className={`chat-reply-quote${m.replyTo.deleted ? ' chat-reply-quote--deleted' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (m.replyTo?.id) {
+                                  scrollToMessage(m.replyTo.id);
+                                }
+                              }}
+                              disabled={!m.replyTo.id}
+                              title={m.replyTo.deleted ? 'Исходное сообщение удалено' : 'Перейти к сообщению'}
+                            >
+                              <span className="chat-reply-quote-author">
+                                {m.replyTo.deleted ? 'Сообщение удалено' : m.replyTo.login}
+                              </span>
+                              <span className="chat-reply-quote-text">
+                                {formatReplyPreview(m.replyTo.body)}
+                              </span>
+                            </button>
                           )}
                           <div className="chat-message-body">
                             <MarkdownMessage
@@ -2203,6 +2310,19 @@ export default function Chat() {
                     }}
                   >
                     Копировать
+                  </button>
+
+                  <button
+                    className="context-menu-item"
+                    onClick={() => {
+                      if (contextMenu.message) {
+                        startReplyingTo(contextMenu.message);
+                      } else {
+                        hideContextMenu();
+                      }
+                    }}
+                  >
+                    Ответить
                   </button>
                   
                   {/* Кнопка загрузки всех медиафайлов, если они есть в сообщении */}
@@ -2552,6 +2672,27 @@ export default function Chat() {
                 </div>
               )}
               
+              {replyingTo && !editingMessage && (
+                <div className="reply-compose-preview">
+                  <div className="reply-compose-info">
+                    <span className="reply-compose-label">
+                      Ответ на сообщение <strong>{replyingTo.login}</strong>
+                    </span>
+                    <span className="reply-compose-text">
+                      {formatReplyPreview(replyingTo.body)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="reply-compose-cancel"
+                    onClick={() => setReplyingTo(null)}
+                    aria-label="Отменить ответ"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               {renderUploadWarning()}
               
               <form onSubmit={(e) => {

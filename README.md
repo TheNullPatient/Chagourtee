@@ -20,6 +20,7 @@ Self-hosted messenger: the owner runs the server on their computer, creates invi
 - **Security**: Authorization via sessions, password hashing
 - **Administration**: Control panel for creating rooms and invites
 - **Message editing**: Ability to edit and delete own messages
+- **Message replies**: Quotes, jump to the original message and a notification for the replied-to user
 - **Message grouping**: Visual grouping of messages from the same user
 - **Multi-message selection**: For bulk deletion
 
@@ -328,6 +329,7 @@ Backend built on Fastify using SQLite for data storage:
 - Login and logout
 - Viewing and filtering rooms
 - Sending, editing and deleting own messages
+- Replying to messages with a quote and a jump to the original
 - Showing "typing..." status
 - Showing online status of other users
 - Changing personal data and password
