@@ -3,7 +3,7 @@ import { useAuth } from '../AuthContext';
 import type { Room, Invite, User, MediaStorageSettings } from '../api';
 import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media } from '../api';
 import { useServerName } from '../ServerNameContext';
-import { initializeWebSocket, addMessageHandler, removeMessageHandler } from '../websocket';
+import { initializeWebSocket, addMessageHandler, removeMessageHandler, addOpenHandler, removeOpenHandler } from '../websocket';
 import { useToast } from '../ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
 import { errorTranslations } from '../localization/errors';
@@ -382,10 +382,31 @@ export default function Admin() {
     initializeWebSocket();
     addMessageHandler(handleWsMessage);
 
+    const handleOpen = () => {
+      // Catch up on changes made while the socket was down.
+      void load();
+      if (user.role === 'owner') {
+        verificationApi.settings()
+          .then(data => {
+            setVerificationEnabled(!!data.enabled);
+            setDeleteCommentOnApprove(!!data.deleteCommentOnApprove);
+          })
+          .catch(() => {});
+        media.getStorageSettings()
+          .then(applyMediaStorageSettings)
+          .catch(() => {});
+        verificationApi.listCodes()
+          .then(res => setCodes(res.codes))
+          .catch(() => {});
+      }
+    };
+    addOpenHandler(handleOpen);
+
     return () => {
       removeMessageHandler(handleWsMessage);
+      removeOpenHandler(handleOpen);
     };
-  }, [user, setRawNameLocal, applyMediaStorageSettings]);
+  }, [user, setRawNameLocal, applyMediaStorageSettings, load]);
 
   // Helper function for copying text to clipboard with fallback
   const copyToClipboard = async (text: string) => {

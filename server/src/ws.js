@@ -344,50 +344,6 @@ module.exports = function (fastify) {
     });
   }
   
-  // Broadcast media file uploads to all users in the room
-  function broadcastMediaUploaded(roomId, fileId, fileName, fileSize, mimeType, userId, login) {
-    const payload = JSON.stringify({
-      type: 'media_uploaded',
-      file: { id: fileId, name: fileName, size: fileSize, mimeType },
-      userId,
-      login
-    });
-
-    wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
-        try {
-          c.send(payload);
-        } catch (err) {
-          if (err.code !== 'ECONNRESET' && err.code !== 'EPIPE') {
-            fastify.log.error('broadcastMediaUploaded send error:', err);
-          }
-        }
-      }
-    });
-  }
-  
-  // Broadcast media file sharing to all users in the room
-  function broadcastMediaShared(roomId, fileId, fileName, fileSize, mimeType, userId, login) {
-    const payload = JSON.stringify({
-      type: 'media_shared',
-      file: { id: fileId, name: fileName, size: fileSize, mimeType },
-      userId,
-      login
-    });
-
-    wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
-        try {
-          c.send(payload);
-        } catch (err) {
-          if (err.code !== 'ECONNRESET' && err.code !== 'EPIPE') {
-            fastify.log.error('broadcastMediaShared send error:', err);
-          }
-        }
-      }
-    });
-  }
-
   function broadcastToRoom(roomId, payload, senderWs = null) {
     const data = JSON.stringify(payload);
     if (process.env.DEBUG_MODE === 'true') {
@@ -498,16 +454,6 @@ module.exports = function (fastify) {
   // Broadcast message deletions to all users in the room
   fastify.broadcastMessageDeleted = function (roomId, messageId, userId, login) {
     broadcastMessageDeleted(roomId, messageId, userId, login);
-  };
-  
-  // Broadcast media file uploads to all users in the room
-  fastify.broadcastMediaUploaded = function (roomId, fileId, fileName, fileSize, mimeType, userId, login) {
-    broadcastMediaUploaded(roomId, fileId, fileName, fileSize, mimeType, userId, login);
-  };
-  
-  // Broadcast media file sharing to all users in the room
-  fastify.broadcastMediaShared = function (roomId, fileId, fileName, fileSize, mimeType, userId, login) {
-    broadcastMediaShared(roomId, fileId, fileName, fileSize, mimeType, userId, login);
   };
   
   fastify.broadcastRoomDeletion = function (roomId) {

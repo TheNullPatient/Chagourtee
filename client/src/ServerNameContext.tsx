@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { ServerSettings } from './api';
 import { serverSettings as serverSettingsApi, serverVersion, VersionInfo, isRedirecting } from './api';
-import { initializeWebSocket, addMessageHandler, removeMessageHandler } from './websocket';
+import { initializeWebSocket, addMessageHandler, removeMessageHandler, addOpenHandler, removeOpenHandler } from './websocket';
 import { formatVersionDisplay } from './version'; // Import the new version utility
 
 type ServerNameContextValue = {
@@ -86,8 +86,15 @@ export function ServerNameProvider({ children }: { children: React.ReactNode }) 
     initializeWebSocket();
     addMessageHandler(handleWsMessage);
 
+    const handleOpen = () => {
+      // Pick up a rename that happened while the socket was down.
+      void load();
+    };
+    addOpenHandler(handleOpen);
+
     return () => {
       removeMessageHandler(handleWsMessage);
+      removeOpenHandler(handleOpen);
     };
   }, []);
 

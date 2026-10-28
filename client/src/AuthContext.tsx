@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, User, isNetworkError, redirectToConnectionError, clearRedirectFlag, isRedirecting } from './api';
 import { 
@@ -6,6 +6,8 @@ import {
   closeWebSocket, 
   addMessageHandler, 
   removeMessageHandler,
+  addOpenHandler,
+  removeOpenHandler,
   isWebSocketConnected 
 } from './websocket';
 import { logger } from './utils/logger'; // Import our logger
@@ -116,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     if (!user) {
       try {
         const userData = await api<User>('/api/auth/me');
@@ -135,7 +137,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         navigate('/login');
       }
     }
-  };
+  }, [user, navigate]);
+
+  // A role or verification change made while the socket was down is never
+  // replayed, so refresh identity after every reconnect.
+  useEffect(() => {
+    if (!user) return;
+    const handleOpen = () => {
+      void refresh();
+    };
+    addOpenHandler(handleOpen);
+    return () => {
+      removeOpenHandler(handleOpen);
+    };
+  }, [user, refresh]);
 
   useEffect(() => {
     const init = async () => {

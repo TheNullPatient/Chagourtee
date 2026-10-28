@@ -8,7 +8,8 @@ import {
   removeMessageHandler,
   initializeWebSocket,
   addOpenHandler,
-  removeOpenHandler
+  removeOpenHandler,
+  isWebSocketConnected
 } from '../websocket'; // Import WebSocket manager
 import { logger } from '../utils/logger'; // Import our logger
 // Import the custom hook
@@ -211,6 +212,7 @@ export default function Chat() {
   const [originalMediaOnEditStart, setOriginalMediaOnEditStart] = useState<any[] | null>(null);  // Track original media when editing starts
   const typingIndicatorRef = useRef<HTMLDivElement>(null);
   const typingTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const hasConnectedRef = useRef(isWebSocketConnected());
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const longPressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null); // Для обработки долгого нажатия
   const doubleClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null); // Таймер для отслеживания двойного клика
@@ -352,22 +354,22 @@ export default function Chat() {
   }, []);
 
   // Load all users to get their roles
-  useEffect(() => {
-    const loadAllUsers = async () => {
-      try {
-        const [usersResponse, onlineResponse] = await Promise.all([
-          users.list(),
-          users.online(),
-        ]);
-        setAllUsers(usersResponse.users);
-        setOnlineUserIds(new Set(onlineResponse.onlineUserIds));
-      } catch (error) {
-        console.error('Failed to load users:', error);
-      }
-    };
-    
-    loadAllUsers();
+  const loadUsers = useCallback(async () => {
+    try {
+      const [usersResponse, onlineResponse] = await Promise.all([
+        users.list(),
+        users.online(),
+      ]);
+      setAllUsers(usersResponse.users);
+      setOnlineUserIds(new Set(onlineResponse.onlineUserIds));
+    } catch (error) {
+      console.error('Failed to load users:', error);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadUsers();
+  }, [loadUsers]);
 
   // Handle clicks outside the context menu
   useEffect(() => {
@@ -967,11 +969,19 @@ export default function Chat() {
     // Global open handler to (re)join room on every WebSocket (re)connection
     const handleOpen = () => {
       logger.debug('Global WebSocket open handler triggered in Chat');
+      const wasConnected = hasConnectedRef.current;
+      hasConnectedRef.current = true;
       if (!roomId) return;
       const ws = getWebSocket();
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'join', roomId }));
         logger.debug(`Sent join message for room ${roomId} from global open handler`);
+      }
+      if (wasConnected) {
+        // Catch up on anything missed while the socket was down.
+        void loadRooms();
+        void loadUsers();
+        void loadMessages(roomId);
       }
     };
     addOpenHandler(handleOpen);
@@ -988,7 +998,7 @@ export default function Chat() {
       timeouts.forEach((timeoutId) => clearTimeout(timeoutId));
       timeouts.clear();
     };
-  }, [roomId, user]); // Re-run when room or user changes so "typing" handler sees fresh user
+  }, [roomId, user, loadMessages, loadRooms, loadUsers]); // Re-run when room or user changes so "typing" handler sees fresh user
 
 
   function handleTyping() {
