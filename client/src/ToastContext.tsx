@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useRef, useState, ReactNode } from 'react';
 import Toast from './components/Toast';
 
 interface ToastContextType {
@@ -20,23 +20,31 @@ interface ToastItem {
 
 export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  // A counter keeps ids unique even when two toasts are shown in the same
+  // millisecond, so one timeout cannot remove another toast.
+  const nextToastId = useRef(1);
 
-  const showToast = (message: string, type: 'success' | 'error', duration?: number) => {
-    const id = Date.now();
-    setToasts((prev) => [
-      ...prev,
-      { id, message, type, duration }
-    ]);
+  // Stable identity: consumers use showToast in effect dependencies, and an
+  // unstable callback made those effects re-run on every toast.
+  const showToast = useCallback(
+    (message: string, type: 'success' | 'error', duration?: number) => {
+      const id = nextToastId.current++;
+      setToasts((prev) => [
+        ...prev,
+        { id, message, type, duration }
+      ]);
 
-    // Auto-remove toast after its duration plus animation time
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((toast) => toast.id !== id));
-    }, (duration || 5000) + 300); // 300ms for exit animation
-  };
+      // Auto-remove toast after its duration plus animation time
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      }, (duration || 5000) + 300); // 300ms for exit animation
+    },
+    []
+  );
 
-  const removeToast = (id: number) => {
+  const removeToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
-  };
+  }, []);
 
   return (
     <ToastContext.Provider value={{ showToast }}>

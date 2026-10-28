@@ -635,16 +635,21 @@ export default function Chat() {
       if (!roomId) return;
       setLockingRoom(true);
       try {
+        let message: string;
         if (forEveryone) {
           await roomsApi.lockAll(roomId);
-          showToast('Комната заблокирована для всех', 'success');
+          message = 'Комната заблокирована для всех';
         } else {
           await roomsApi.lock(roomId);
           ephemeralUnlockedRoomsRef.current.delete(roomId);
-          showToast('Комната заблокирована', 'success');
+          message = 'Комната заблокирована';
         }
         setUnlockPassword('');
+        // Refresh the list before showing the toast: the room is already locked
+        // on the server, and the message effect must not try to load messages
+        // in the short window before the UI knows about it.
         await loadRooms();
+        showToast(message, 'success');
       } catch (error) {
         const message =
           error instanceof Error ? error.message : 'Не удалось заблокировать комнату';
@@ -669,7 +674,7 @@ export default function Chat() {
           'Все пользователи потеряют доступ к комнате и должны будут снова ввести пароль.',
         confirmText: 'Заблокировать',
         cancelText: 'Отмена',
-        variant: 'warning',
+        variant: 'danger',
         onConfirm: () => {
           setConfirmModal((prev) => ({ ...prev, isOpen: false }));
           void lockRoom(true);
