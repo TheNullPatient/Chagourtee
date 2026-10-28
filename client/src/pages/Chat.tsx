@@ -669,6 +669,9 @@ export default function Chat() {
               return next;
             });
             setTypingUsers(prev => prev.filter(u => u.userId !== data.userId));
+            // Messages are cascade-deleted on the server.
+            setMessages(prev => prev.filter(m => m.user_id !== data.userId));
+            void loadRooms();
           }
           break;
 
@@ -735,7 +738,7 @@ export default function Chat() {
       // Remove message handler when component unmounts
       removeMessageHandler(handleGlobalWsMessage);
     };
-  }, [roomId, user, navigate, scheduleMediaSettingsRefresh]); // Re-run when room or user changes so unread logic sees fresh state
+  }, [roomId, user, navigate, scheduleMediaSettingsRefresh, loadRooms]); // Re-run when room or user changes so unread logic sees fresh state
 
   // Handle WebSocket messages related to chat and room-specific events
   useEffect(() => {
