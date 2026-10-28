@@ -30,6 +30,23 @@ import { TabletBottomNav } from '../components/TabletBottomNav';
 import { IconHome, IconLock, IconUsers } from '../components/icons/Icons';
 import { errorTranslations } from '../localization/errors';
 
+// How long the user may skip re-entering a room password. 0 = ask on every visit.
+const UNLOCK_REMEMBER_OPTIONS = [
+  { value: 0, label: 'Спрашивать каждый раз' },
+  { value: 5, label: '5 минут' },
+  { value: 15, label: '15 минут' },
+  { value: 30, label: '30 минут' },
+  { value: 60, label: '1 час' },
+] as const;
+const UNLOCK_REMEMBER_STORAGE_KEY = 'chagourtee:roomUnlockRemember';
+
+// Errors returned by the server when the room access was lost (e.g. a
+// remembered password expired while the room was open).
+const ROOM_ACCESS_ERRORS = new Set(['Room is locked', 'Room access denied']);
+function isRoomAccessError(error: unknown): boolean {
+  return error instanceof Error && ROOM_ACCESS_ERRORS.has(error.message);
+}
+
 // Global type extensions used by the drag-and-drop folder handling below
 declare global {
   interface FileSystemEntry {
@@ -208,6 +225,17 @@ export default function Chat() {
   const [roomsLoaded, setRoomsLoaded] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlocking, setUnlocking] = useState(false);
+  const [unlockRememberMinutes, setUnlockRememberMinutes] = useState<number>(() => {
+    try {
+      const stored = Number(localStorage.getItem(UNLOCK_REMEMBER_STORAGE_KEY));
+      return UNLOCK_REMEMBER_OPTIONS.some((option) => option.value === stored) ? stored : 0;
+    } catch {
+      return 0;
+    }
+  });
+  // Rooms unlocked "for this visit only", so they can be locked again when the
+  // user leaves them even if the socket could not deliver the leave event.
+  const ephemeralUnlockedRoomsRef = useRef<Set<number>>(new Set());
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [sendText, setSendText] = useState('');
@@ -483,8 +511,27 @@ export default function Chat() {
   }, [updateScrollButtonVisibility, roomId]);
 
   useEffect(() => {
-    loadRooms();
-  }, [loadRooms]);
+    // Access may have changed while the user was elsewhere, and a password
+    // remembered for a limited time may have expired, so refresh the per-user
+    // room list on every room switch before loading its messages.
+    setRoomsLoaded(false);
+    void loadRooms();
+  }, [roomId, loadRooms]);
+
+  // A password remembered "for this visit only" must not survive leaving the
+  // room, even if the socket is down and cannot deliver the leave event.
+  useEffect(() => {
+    if (!roomId) return;
+    const leavingRoomId = roomId;
+    // The Set instance is created once with useRef and never reassigned.
+    const ephemeralUnlockedRooms = ephemeralUnlockedRoomsRef.current;
+    return () => {
+      if (ephemeralUnlockedRooms.has(leavingRoomId)) {
+        ephemeralUnlockedRooms.delete(leavingRoomId);
+        roomsApi.lock(leavingRoomId).catch(() => {});
+      }
+    };
+  }, [roomId]);
 
   useEffect(() => {
     setReplyingTo(null);
@@ -513,6 +560,11 @@ export default function Chat() {
       .catch((error) => {
         const message =
           error instanceof Error ? error.message : 'Не удалось загрузить сообщения';
+        if (isRoomAccessError(error)) {
+          // The room locked itself again (expired password window or revoked
+          // access) — refresh the list so the unlock panel takes over.
+          void loadRooms();
+        }
         showToast(errorTranslations[message] || message, 'error');
         setMessages([]);
       })
@@ -525,6 +577,7 @@ export default function Chat() {
     activeRoomId,
     activeRoomLocked,
     loadMessages,
+    loadRooms,
     updateScrollButtonVisibility,
     showToast,
   ]);
@@ -534,7 +587,12 @@ export default function Chat() {
     if (!roomId || !unlockPassword) return;
     setUnlocking(true);
     try {
-      await roomsApi.unlock(roomId, unlockPassword);
+      const result = await roomsApi.unlock(roomId, unlockPassword, unlockRememberMinutes);
+      if (result.ephemeral) {
+        ephemeralUnlockedRoomsRef.current.add(roomId);
+      } else {
+        ephemeralUnlockedRoomsRef.current.delete(roomId);
+      }
       setUnlockPassword('');
       await loadRooms();
     } catch (error) {
@@ -543,6 +601,15 @@ export default function Chat() {
       showToast(errorTranslations[message] || message, 'error');
     } finally {
       setUnlocking(false);
+    }
+  };
+
+  const handleUnlockRememberChange = (value: number) => {
+    setUnlockRememberMinutes(value);
+    try {
+      localStorage.setItem(UNLOCK_REMEMBER_STORAGE_KEY, String(value));
+    } catch {
+      // Private mode may block storage; the choice still works for this visit.
     }
   };
 
@@ -606,6 +673,14 @@ export default function Chat() {
       logger.debug('Received global WebSocket message:', data);
       
       switch(data.type) {
+        case 'error':
+          // The socket refused a join because the room is locked or access was
+          // revoked; refetch the list so the UI shows the right panel.
+          if (data.code === 'ROOM_LOCKED' || data.code === 'ROOM_FORBIDDEN') {
+            void loadRooms();
+          }
+          break;
+
         case 'room_deleted':
           // Handle room deletion notification
           if (data.roomId === roomId) {
@@ -1639,6 +1714,10 @@ export default function Chat() {
       if (uploadErr?.code === 'MEDIA_FILE_TOO_LARGE' || uploadErr?.code === 'MEDIA_UPLOAD_DISABLED') {
         return;
       }
+      if (isRoomAccessError(err)) {
+        // Access expired while the room was open — show the unlock panel.
+        void loadRooms();
+      }
       showToast(err instanceof Error ? err.message : 'Не удалось отправить', 'error');
     }
   }
@@ -2219,17 +2298,32 @@ export default function Chat() {
                       Комната защищена паролем. Введите его, чтобы войти.
                     </p>
                     <form className="chat-unlock-form" onSubmit={handleUnlockRoom}>
-                      <input
-                        type="password"
-                        value={unlockPassword}
-                        onChange={(e) => setUnlockPassword(e.target.value)}
-                        placeholder="Пароль комнаты"
-                        autoComplete="current-password"
-                        autoFocus
-                      />
-                      <button type="submit" disabled={unlocking || !unlockPassword}>
-                        {unlocking ? 'Проверка…' : 'Войти'}
-                      </button>
+                      <div className="chat-unlock-row">
+                        <input
+                          type="password"
+                          value={unlockPassword}
+                          onChange={(e) => setUnlockPassword(e.target.value)}
+                          placeholder="Пароль комнаты"
+                          autoComplete="current-password"
+                          autoFocus
+                        />
+                        <button type="submit" disabled={unlocking || !unlockPassword}>
+                          {unlocking ? 'Проверка…' : 'Войти'}
+                        </button>
+                      </div>
+                      <label className="chat-unlock-remember">
+                        <span>Запоминать пароль:</span>
+                        <select
+                          value={unlockRememberMinutes}
+                          onChange={(e) => handleUnlockRememberChange(Number(e.target.value))}
+                        >
+                          {UNLOCK_REMEMBER_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </form>
                   </>
                 ) : (

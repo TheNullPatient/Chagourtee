@@ -53,6 +53,7 @@ export const errorTranslations: Record<string, string> = {
   'Room does not require a password': 'Этой комнате пароль не нужен',
   'Room is locked': 'Комната заблокирована',
   'Room access denied': 'Доступ к комнате запрещён',
+  'Invalid remember duration': 'Неверный срок запоминания пароля',
   'Too many password attempts. Try again later.': 'Слишком много попыток ввода пароля. Попробуйте позже.',
   'Main room must stay public': 'Основная комната должна оставаться публичной',
   'memberIds must be an array': 'Список пользователей должен быть массивом',

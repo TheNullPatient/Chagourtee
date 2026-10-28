@@ -14,6 +14,8 @@ const {
   replaceRoomMembers,
   clearRoomUnlocks,
   grantRoomUnlock,
+  revokeRoomUnlock,
+  ROOM_UNLOCK_MAX_MINUTES,
   isPrivileged,
 } = require('./roomAccess');
 
@@ -363,8 +365,21 @@ module.exports = function (fastify) {
     if (level !== 'closed') {
       return reply.code(400).send({ error: 'Room does not require a password' });
     }
+
+    // 0 = ask again on the next visit, up to ROOM_UNLOCK_MAX_MINUTES.
+    const rawRemember = request.body?.rememberMinutes;
+    const rememberMinutes = rawRemember === undefined ? 0 : rawRemember;
+    if (
+      typeof rememberMinutes !== 'number' ||
+      !Number.isInteger(rememberMinutes) ||
+      rememberMinutes < 0 ||
+      rememberMinutes > ROOM_UNLOCK_MAX_MINUTES
+    ) {
+      return reply.code(400).send({ error: 'Invalid remember duration' });
+    }
+
     if (isPrivileged(user)) {
-      return { ok: true, unlocked: true };
+      return { ok: true, unlocked: true, privileged: true, rememberMinutes };
     }
 
     const key = `${userId}:${id}`;
@@ -386,9 +401,27 @@ module.exports = function (fastify) {
     }
 
     unlockAttempts.delete(key);
-    grantRoomUnlock(db, id, userId);
+    const unlock = grantRoomUnlock(db, id, userId, { rememberMinutes });
 
-    return { ok: true, unlocked: true };
+    return {
+      ok: true,
+      unlocked: true,
+      rememberMinutes,
+      ephemeral: Boolean(unlock?.ephemeral),
+      expiresAt: unlock?.expires_at ?? null,
+    };
+  });
+
+  // Drops a previous unlock, e.g. when the user leaves a room that must ask
+  // for the password again on the next visit.
+  fastify.delete('/api/rooms/:id/unlock', {
+    preHandler: [fastify.requireAuth],
+  }, async (request, reply) => {
+    const id = Number(request.params.id);
+    const room = getRoom(db, id);
+    if (!room) return reply.code(404).send({ error: 'Room not found' });
+    revokeRoomUnlock(db, id, request.session.userId);
+    return { ok: true, unlocked: false };
   });
 
   fastify.delete('/api/rooms/:id', {

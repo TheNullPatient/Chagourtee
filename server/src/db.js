@@ -68,6 +68,8 @@ function createDb(dbPath) {
       room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT,
+      ephemeral INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (room_id, user_id)
     );
 
@@ -275,6 +277,18 @@ function createDb(dbPath) {
     }
     if (!roomColumns.includes('password_hash')) {
       db.exec('ALTER TABLE rooms ADD COLUMN password_hash TEXT');
+    }
+
+    const unlockColumns = db
+      .prepare('PRAGMA table_info(room_unlocks)')
+      .all()
+      .map((c) => c.name);
+
+    if (!unlockColumns.includes('expires_at')) {
+      db.exec('ALTER TABLE room_unlocks ADD COLUMN expires_at TEXT');
+    }
+    if (!unlockColumns.includes('ephemeral')) {
+      db.exec('ALTER TABLE room_unlocks ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0');
     }
 
     db.exec('CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON room_members(user_id)');

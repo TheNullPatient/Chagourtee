@@ -210,6 +210,51 @@ test('websocket joins and message notifications respect room access', async () =
       JSON.stringify(outsider.messages)
     );
 
+    const readClosedRoom = () =>
+      fetch(`${server.baseUrl}/api/rooms/${closedRoom}/messages`, {
+        headers: { Cookie: `chagourtee_sid=${outsiderSession}` },
+      });
+
+    // Default unlock is for the current visit only: leaving forgets it.
+    outsider.ws.send(JSON.stringify({ type: 'leave', roomId: closedRoom }));
+    await delay(200);
+    const afterLeave = await readClosedRoom();
+    check(
+      'leaving a room forgets a password that was not meant to be remembered',
+      afterLeave.status === 403,
+      await afterLeave.text()
+    );
+
+    // A remembered password survives leaving the room until it expires.
+    const rememberedUnlock = await fetch(
+      `${server.baseUrl}/api/rooms/${closedRoom}/unlock`,
+      {
+        method: 'POST',
+        headers: {
+          Cookie: `chagourtee_sid=${outsiderSession}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password: 'join-pass', rememberMinutes: 30 }),
+      }
+    );
+    check(
+      'outsider can unlock with a remember duration',
+      rememberedUnlock.status === 200,
+      await rememberedUnlock.text()
+    );
+
+    outsider.messages.length = 0;
+    outsider.ws.send(JSON.stringify({ type: 'join', roomId: closedRoom }));
+    await delay(200);
+    outsider.ws.send(JSON.stringify({ type: 'leave', roomId: closedRoom }));
+    await delay(200);
+    const afterRememberedLeave = await readClosedRoom();
+    check(
+      'a remembered password survives leaving the room',
+      afterRememberedLeave.status === 200,
+      await afterRememberedLeave.text()
+    );
+
     owner.ws.close();
     member.ws.close();
     outsider.ws.close();

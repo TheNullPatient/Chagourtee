@@ -7,6 +7,7 @@ const {
   canViewRoom,
   canAccessRoom,
   normalizeAccessLevel,
+  revokeEphemeralUnlock,
 } = require('./roomAccess');
 
 const SESSION_COOKIE = 'chagourtee_sid';
@@ -188,6 +189,9 @@ module.exports = function (fastify) {
         if (msg.type === 'leave' && isValidRoomId(msg.roomId)) {
           const roomId = Number(msg.roomId);
           if (ws.currentRoomId === roomId) {
+            // A password remembered "for this visit only" must not survive
+            // leaving the room: the next visit asks for it again.
+            revokeEphemeralUnlock(fastify.db, roomId, userId);
             ws.currentRoomId = null;
             if (process.env.DEBUG_MODE === 'true') {
               fastify.log.info(`User ${userId} left room ${roomId}`);
@@ -257,6 +261,9 @@ module.exports = function (fastify) {
       cleanedUp = true;
 
       clearInterval(heartbeatInterval);
+      if (ws.currentRoomId) {
+        revokeEphemeralUnlock(fastify.db, ws.currentRoomId, userId);
+      }
       ws.currentRoomId = null;
       userByClient.delete(ws);
 

@@ -252,6 +252,13 @@ test('room access levels control visibility, joining and messages', async () => 
       { password: 'secret-pass' }
     );
     check('correct room password unlocks the room', unlock.statusCode === 200, unlock.body);
+    check(
+      'by default the password is not remembered between visits',
+      unlock.json().ephemeral === true &&
+        unlock.json().rememberMinutes === 0 &&
+        typeof unlock.json().expiresAt === 'string',
+      unlock.body
+    );
 
     const afterUnlockList = await request('GET', '/api/rooms', outsider);
     check(
@@ -276,6 +283,105 @@ test('room access levels control visibility, joining and messages', async () => 
       { body: 'Unlocked hello' }
     );
     check('unlocked user can send messages', unlockedSend.statusCode === 200, unlockedSend.body);
+
+    // Remembering the password for a limited time.
+    const remembered = await request(
+      'POST',
+      `/api/rooms/${closedRoom.id}/unlock`,
+      outsider,
+      { password: 'secret-pass', rememberMinutes: 30 }
+    );
+    check('unlock accepts a remember duration', remembered.statusCode === 200, remembered.body);
+    check(
+      'a remembered unlock is persistent and has an expiry',
+      remembered.json().ephemeral === false &&
+        remembered.json().rememberMinutes === 30 &&
+        typeof remembered.json().expiresAt === 'string',
+      remembered.body
+    );
+
+    const rememberedRow = db
+      .prepare(
+        'SELECT ephemeral, expires_at FROM room_unlocks WHERE room_id = ? AND user_id = ?'
+      )
+      .get(closedRoom.id, outsider);
+    check(
+      'remembered unlock is stored as persistent',
+      rememberedRow?.ephemeral === 0 && Boolean(rememberedRow?.expires_at),
+      JSON.stringify(rememberedRow)
+    );
+
+    const tooLong = await request(
+      'POST',
+      `/api/rooms/${closedRoom.id}/unlock`,
+      outsider,
+      { password: 'secret-pass', rememberMinutes: 61 }
+    );
+    check(
+      'remember duration cannot exceed one hour',
+      tooLong.statusCode === 400,
+      tooLong.body
+    );
+
+    const wrongType = await request(
+      'POST',
+      `/api/rooms/${closedRoom.id}/unlock`,
+      outsider,
+      { password: 'secret-pass', rememberMinutes: '30' }
+    );
+    check(
+      'remember duration must be a number',
+      wrongType.statusCode === 400,
+      wrongType.body
+    );
+
+    // Expired unlocks must lock the room again.
+    db.prepare(
+      `UPDATE room_unlocks SET expires_at = datetime('now', '-1 minute')
+       WHERE room_id = ? AND user_id = ?`
+    ).run(closedRoom.id, outsider);
+    const expiredRead = await request(
+      'GET',
+      `/api/rooms/${closedRoom.id}/messages`,
+      outsider
+    );
+    check(
+      'an expired unlock locks the room again',
+      expiredRead.statusCode === 403 && expiredRead.json().code === 'ROOM_LOCKED',
+      expiredRead.body
+    );
+
+    // The client can drop an unlock explicitly when it leaves a room.
+    const unlockAgain = await request(
+      'POST',
+      `/api/rooms/${closedRoom.id}/unlock`,
+      outsider,
+      { password: 'secret-pass' }
+    );
+    check('room can be unlocked again after expiry', unlockAgain.statusCode === 200, unlockAgain.body);
+
+    const manualLock = await request(
+      'DELETE',
+      `/api/rooms/${closedRoom.id}/unlock`,
+      outsider
+    );
+    check('user can drop the unlock manually', manualLock.statusCode === 200, manualLock.body);
+
+    const afterManualLockRead = await request(
+      'GET',
+      `/api/rooms/${closedRoom.id}/messages`,
+      outsider
+    );
+    check(
+      'a manual lock revokes access immediately',
+      afterManualLockRead.statusCode === 403,
+      afterManualLockRead.body
+    );
+
+    // Restore the unlock so the password-change checks below stay meaningful.
+    await request('POST', `/api/rooms/${closedRoom.id}/unlock`, outsider, {
+      password: 'secret-pass',
+    });
 
     const unlockPublic = await request(
       'POST',

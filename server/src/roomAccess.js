@@ -18,6 +18,12 @@ const ACCESS_LEVELS = Object.freeze(['public', 'closed', 'private', 'restricted'
 const DEFAULT_ACCESS_LEVEL = 'public';
 const ROOM_PASSWORD_MIN_LENGTH = 4;
 const ROOM_PASSWORD_MAX_LENGTH = 128;
+// How long a user may postpone re-entering a room password (0 = ask on every visit).
+const ROOM_UNLOCK_MAX_MINUTES = 60;
+// A "do not remember" unlock is revoked as soon as the user leaves the room.
+// This fallback only matters if the socket never reports the leave (crash,
+// killed tab, network loss), so it is deliberately generous.
+const EPHEMERAL_UNLOCK_FALLBACK_MINUTES = 12 * 60;
 
 function isValidAccessLevel(value) {
   return ACCESS_LEVELS.includes(String(value || '').trim().toLowerCase());
@@ -54,7 +60,11 @@ function hasRoomUnlock(db, roomId, userId) {
   if (!userId) return false;
   return Boolean(
     db
-      .prepare('SELECT 1 FROM room_unlocks WHERE room_id = ? AND user_id = ?')
+      .prepare(
+        `SELECT 1 FROM room_unlocks
+         WHERE room_id = ? AND user_id = ?
+           AND (expires_at IS NULL OR expires_at > datetime('now'))`
+      )
       .get(roomId, userId)
   );
 }
@@ -207,9 +217,49 @@ function clearRoomUnlocks(db, roomId) {
   db.prepare('DELETE FROM room_unlocks WHERE room_id = ?').run(roomId);
 }
 
-function grantRoomUnlock(db, roomId, userId) {
+function getRoomUnlock(db, roomId, userId) {
+  return db
+    .prepare(
+      `SELECT room_id, user_id, created_at, expires_at, ephemeral
+       FROM room_unlocks WHERE room_id = ? AND user_id = ?`
+    )
+    .get(roomId, userId);
+}
+
+/**
+ * Stores an unlock for the user. `rememberMinutes` 0 means "ask again on the
+ * next visit": such unlock is marked ephemeral and revoked when the user
+ * leaves the room. Positive values keep the room open for that many minutes.
+ */
+function grantRoomUnlock(db, roomId, userId, { rememberMinutes = 0 } = {}) {
+  const requested = Number(rememberMinutes);
+  const minutes =
+    Number.isFinite(requested) && requested > 0
+      ? Math.min(Math.floor(requested), ROOM_UNLOCK_MAX_MINUTES)
+      : 0;
+  const ephemeral = minutes === 0 ? 1 : 0;
+  const lifetimeMinutes = ephemeral ? EPHEMERAL_UNLOCK_FALLBACK_MINUTES : minutes;
+
   db.prepare(
-    'INSERT OR IGNORE INTO room_unlocks (room_id, user_id) VALUES (?, ?)'
+    `INSERT INTO room_unlocks (room_id, user_id, created_at, expires_at, ephemeral)
+     VALUES (?, ?, datetime('now'), datetime('now', ?), ?)
+     ON CONFLICT(room_id, user_id) DO UPDATE SET
+       created_at = datetime('now'),
+       expires_at = excluded.expires_at,
+       ephemeral = excluded.ephemeral`
+  ).run(roomId, userId, `+${lifetimeMinutes} minutes`, ephemeral);
+
+  return getRoomUnlock(db, roomId, userId);
+}
+
+function revokeRoomUnlock(db, roomId, userId) {
+  db.prepare('DELETE FROM room_unlocks WHERE room_id = ? AND user_id = ?').run(roomId, userId);
+}
+
+/** Removes the unlock only if it was issued for a single visit. */
+function revokeEphemeralUnlock(db, roomId, userId) {
+  db.prepare(
+    'DELETE FROM room_unlocks WHERE room_id = ? AND user_id = ? AND ephemeral = 1'
   ).run(roomId, userId);
 }
 
@@ -233,6 +283,7 @@ module.exports = {
   DEFAULT_ACCESS_LEVEL,
   ROOM_PASSWORD_MIN_LENGTH,
   ROOM_PASSWORD_MAX_LENGTH,
+  ROOM_UNLOCK_MAX_MINUTES,
   isValidAccessLevel,
   normalizeAccessLevel,
   isPrivileged,
@@ -249,6 +300,9 @@ module.exports = {
   listRoomMembers,
   replaceRoomMembers,
   clearRoomUnlocks,
+  getRoomUnlock,
   grantRoomUnlock,
+  revokeRoomUnlock,
+  revokeEphemeralUnlock,
   decorateRoom,
 };

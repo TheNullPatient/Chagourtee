@@ -56,6 +56,12 @@ function createOutdatedSchema(dbPath) {
       body TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE room_unlocks (
+      room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (room_id, user_id)
+    );
   `);
   db.close();
 }
@@ -79,6 +85,7 @@ function inspect(dbPath) {
       indexes,
       messageColumns: columns('messages'),
       roomColumns: columns('rooms'),
+      unlockColumns: tables.includes('room_unlocks') ? columns('room_unlocks') : [],
       userColumns: columns('users'),
       verificationColumns: columns('verification_settings'),
       mediaColumns: tables.includes('media_files') ? columns('media_files') : [],
@@ -137,6 +144,10 @@ test('update-schema migrates an outdated database in place', () => {
     check(
       'adds room access columns',
       state.roomColumns.includes('access_level') && state.roomColumns.includes('password_hash')
+    );
+    check(
+      'adds room unlock expiry columns',
+      state.unlockColumns.includes('expires_at') && state.unlockColumns.includes('ephemeral')
     );
     check(
       'adds users.registration_comment',

@@ -1301,19 +1301,46 @@ button.chat-room-link:hover {
 
 .chat-unlock-form {
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.6rem;
   width: 100%;
   max-width: 22rem;
   margin-top: 0.25rem;
 }
 
-.chat-unlock-form input {
+.chat-unlock-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.chat-unlock-row input {
   flex: 1;
   min-width: 0;
 }
 
-.chat-unlock-form button {
+.chat-unlock-row button {
   flex-shrink: 0;
+}
+
+.chat-unlock-remember {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.chat-unlock-remember select {
+  flex-shrink: 0;
+  max-width: 13rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
 }
 
 .chat-locked-back {
