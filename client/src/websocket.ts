@@ -5,7 +5,7 @@ import { redirectToConnectionError } from './api';
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
-const maxReconnectAttempts = 5;
+const maxReconnectAttempts = 20;
 const reconnectDelay = 3000; // 3 seconds
 
 // Handlers for messages and connection events
@@ -233,21 +233,22 @@ export function joinRoom(roomId: number) {
  * Leave a room
  */
 export function leaveRoom(roomId: number) {
+  // Stop tracking even when the socket is down; the room will not be rejoined
+  // on the next connection.
+  joinedRooms.delete(roomId);
+
   if (!sharedWebSocket) {
-    logger.error('Cannot leave room: WebSocket not initialized');
+    logger.debug('Cannot leave room: WebSocket not initialized');
     return;
   }
 
   if (sharedWebSocket.readyState !== WebSocket.OPEN) {
-    logger.error('Cannot leave room: WebSocket not open');
+    logger.debug('Cannot leave room: WebSocket not open');
     return;
   }
 
   sharedWebSocket.send(JSON.stringify({ type: 'leave', roomId }));
   logger.debug(`Left room ${roomId}`);
-
-  // Stop tracking that we're in this room
-  joinedRooms.delete(roomId);
 }
 
 /**

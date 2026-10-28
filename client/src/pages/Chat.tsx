@@ -9,7 +9,8 @@ import {
   initializeWebSocket,
   addOpenHandler,
   removeOpenHandler,
-  isWebSocketConnected
+  isWebSocketConnected,
+  leaveRoom
 } from '../websocket'; // Import WebSocket manager
 import { logger } from '../utils/logger'; // Import our logger
 // Import the custom hook
@@ -1000,6 +1001,8 @@ export default function Chat() {
       removeMessageHandler(handleRoomSpecificWsMessage);
       // Remove open handler
       removeOpenHandler(handleOpen);
+      // Leave the room so the server stops sending room broadcasts
+      if (roomId) leaveRoom(roomId);
       // Clear typing timeouts
       const timeouts = typingTimeoutsRef.current;
       timeouts.forEach((timeoutId) => clearTimeout(timeoutId));
