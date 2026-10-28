@@ -55,7 +55,7 @@
 }
 
 .admin-invite-link {
-  word-break: break-word;
+  overflow-wrap: anywhere;
   overflow-wrap: break-word;
   color: var(--accent);
   font-weight: 500;
@@ -147,12 +147,6 @@
   color: var(--text-muted);
 }
 
-.admin-storage-footnote {
-  margin: 0.75rem 0 0;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-}
-
 .admin-room-form {
   display: flex;
   gap: 0.75rem;
@@ -168,14 +162,14 @@
 .admin-room-rename-input {
   flex: 1 1 150px;
   font-weight: 500;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   margin-right: 0.5rem;
 }
 
 .admin-room-title {
   flex: 1 1 150px;
   font-weight: 500;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .admin-room-actions {
@@ -542,7 +536,7 @@
   margin-bottom: 0;
 }
 
-/* Admin storage footnote (duplicate class - kept as in original) */
+/* Admin storage footnote */
 .admin-storage-footnote {
   margin-top: 0.75rem;
   padding: 0.6rem 0.75rem;

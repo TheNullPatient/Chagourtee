@@ -73,7 +73,7 @@
   font-size: 0.875em;
   line-height: 1.45;
   white-space: pre-wrap;
-  word-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .chat-message-body code {
@@ -176,8 +176,7 @@ pre[class*="language-"] {
   border-radius: 0 0 4px 4px !important;
   max-height: 300px;
   overflow: auto;
-  word-break: break-word;
-  word-wrap: break-word;
+  overflow-wrap: anywhere;
   background: #282c34 !important;
   padding: 1em 0 !important;
   font-size: 0.875rem;
@@ -265,17 +264,17 @@ pre[class*="language-"] {
 }
 
 .md-a {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .md-p {
   margin: 0.2em 0;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .md-li {
   margin: 0.2em 0;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .md-blockquote {
@@ -285,7 +284,7 @@ pre[class*="language-"] {
   color: var(--text-muted);
   max-height: 200px;
   overflow: auto;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .md-table-scroll {
@@ -311,11 +310,11 @@ pre[class*="language-"] {
 
 .md-div {
   overflow-x: auto;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .md-span {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .media-container-spaced {

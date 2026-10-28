@@ -7,6 +7,7 @@ interface DisconnectionBannerProps {
 
 const DisconnectionBanner: React.FC<DisconnectionBannerProps> = ({ className }) => {
   const [isVisible, setIsVisible] = useState(!isWebSocketConnected());
+  const [message, setMessage] = useState('Соединение с сервером потеряно. Ожидание сети...');
 
   useEffect(() => {
     // Function to handle connection state changes
@@ -17,9 +18,16 @@ const DisconnectionBanner: React.FC<DisconnectionBannerProps> = ({ className }) 
     // Add handlers for WebSocket events
     const openHandler = () => {
       setIsVisible(false);
+      setMessage('Соединение с сервером потеряно. Ожидание сети...');
     };
 
     const messageHandler = (data: any) => {
+      // A planned shutdown is different from a network failure.
+      if (data && data.type === 'server_shutdown') {
+        setMessage('Сервер перезапускается. Подключение восстановится автоматически...');
+        setIsVisible(true);
+        return;
+      }
       // If we receive any message, we know we're connected
       if (data && typeof data === 'object') {
         setIsVisible(false);
@@ -53,7 +61,7 @@ const DisconnectionBanner: React.FC<DisconnectionBannerProps> = ({ className }) 
 
   return (
     <div className={`disconnection-banner ${className}`}>
-      <span>Соединение с сервером потеряно. Ожидание сети...</span>
+      <span>{message}</span>
     </div>
   );
 };

@@ -261,6 +261,10 @@ export default function Chat() {
     ? storageUsage.totalBytes >= storageUsage.maxStorageSize
     : false;
 
+  const storageUsagePercent = storageUsage.maxStorageSize !== null && storageUsage.maxStorageSize > 0
+    ? Math.min(100, (storageUsage.totalBytes / storageUsage.maxStorageSize) * 100)
+    : 0;
+
   const getStorageLimitLabel = useCallback(() => {
     if (!mediaSettings) return '';
     const storageLabel = storageUsage.maxStorageSize === null || storageUsage.maxStorageSize === 0
@@ -2827,12 +2831,14 @@ export default function Chat() {
                   : `${formatBytes(storageUsage.totalBytes)} из ${formatBytes(storageUsage.maxStorageSize)}`}
               </span>
               {storageUsage.maxStorageSize !== null && storageUsage.maxStorageSize > 0 && (
-                <div className="upload-storage-bar">
-                  <div
-                    className="upload-storage-bar-fill"
-                    style={{ width: `${Math.min(100, (storageUsage.totalBytes / storageUsage.maxStorageSize) * 100)}%` }}
-                  ></div>
-                </div>
+                <progress
+                  className={`upload-storage-bar${
+                    storageUsagePercent >= 90 ? ' danger' : storageUsagePercent >= 80 ? ' warning' : ''
+                  }`}
+                  max={100}
+                  value={storageUsagePercent}
+                  aria-label="Использование хранилища"
+                />
               )}
             </div>
           </div>

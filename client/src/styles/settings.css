@@ -307,25 +307,46 @@
 
 /* Storage usage bar */
 .upload-storage-bar {
+  display: block;
+  width: 100%;
   margin-top: 0.5rem;
   height: 6px;
-  background: var(--bg-tertiary);
+  border: none;
   border-radius: 3px;
+  background: var(--bg-tertiary);
   overflow: hidden;
+  appearance: none;
 }
 
-.upload-storage-bar-fill {
-  height: 100%;
-  background: var(--success);
+.upload-storage-bar::-webkit-progress-bar {
   border-radius: 3px;
+  background: var(--bg-tertiary);
+}
+
+.upload-storage-bar::-webkit-progress-value {
+  border-radius: 3px;
+  background: var(--success);
   transition: width 0.3s ease, background-color 0.3s ease;
 }
 
-.upload-storage-bar-fill[style*="width: 8"] {
+.upload-storage-bar::-moz-progress-bar {
+  border-radius: 3px;
+  background: var(--success);
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.upload-storage-bar.warning::-webkit-progress-value {
   background: var(--warning);
 }
 
-.upload-storage-bar-fill[style*="width: 9"],
-.upload-storage-bar-fill[style*="width: 100"] {
+.upload-storage-bar.warning::-moz-progress-bar {
+  background: var(--warning);
+}
+
+.upload-storage-bar.danger::-webkit-progress-value {
+  background: var(--danger);
+}
+
+.upload-storage-bar.danger::-moz-progress-bar {
   background: var(--danger);
 }

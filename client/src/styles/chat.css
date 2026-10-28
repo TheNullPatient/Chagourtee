@@ -125,8 +125,7 @@ button.chat-room-link:hover {
 
 .chat-room-mention-indicator {
   margin-left: 6px;
-  padding: 0.1rem 0.4rem;
-  border-radius: 999px;
+  padding: 0 4px;
   background: var(--accent);
   color: var(--text-on-accent);
   border-radius: 4px;
@@ -137,8 +136,8 @@ button.chat-room-link:hover {
 }
 
 .chat-room-mention-indicator-noflash {
-  padding: 0.1rem 0.4rem;
-  border-radius: 999px;
+  padding: 0 4px;
+  border-radius: 4px;
   background: var(--accent);
   color: var(--text-on-accent);
   font-size: 0.7rem;
@@ -271,7 +270,6 @@ button.chat-room-link:hover {
 }
 .chat-form button {
   padding: 0.625rem 1rem;
-  border-radius: var(--radius-default);
   border-radius: var(--radius-default);
   align-self: flex-end;
 }
@@ -920,7 +918,7 @@ button.chat-room-link:hover {
   border-radius: 20px;
   animation: pulse 1.5s infinite;
   max-width: 90%;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Responsive adjustments for different screen sizes */
@@ -1005,7 +1003,7 @@ button.chat-room-link:hover {
 .chat-message .chat-message-header .marquee-container {
   flex: 1;
   min-width: 0;
-  margin-right: 6px;
+  margin-right: 0.5rem;
 }
 
 /* Message editing form */
@@ -1209,7 +1207,7 @@ button.chat-room-link:hover {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
 }
@@ -1300,26 +1298,19 @@ button.chat-room-link:hover {
 }
 
 .chat-message .chat-message-header {
-  margin-bottom: 0.5rem;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding-bottom: 0.5rem;
   border-bottom: 1px dashed var(--accent);
   background: linear-gradient(to bottom, var(--bg-elevated), var(--bg-hover));
   border-radius: var(--radius-default) var(--radius-default) 0 0;
-  margin: -0.875rem -1rem 0.5rem -1rem;
-  padding: 0.5rem 1rem 1rem 1rem;
+  margin: -0.875rem -1rem 0.5rem;
+  padding: 0.5rem 1rem 1rem;
 }
 
 .chat-message .chat-message-author {
   font-weight: bold;
   color: var(--text);
-  margin-right: 0.5rem;
-}
-
-/* Стили для marquee в заголовке сообщения */
-.chat-message .chat-message-header .marquee-container {
   margin-right: 0.5rem;
 }
 
@@ -1333,7 +1324,7 @@ button.chat-room-link:hover {
 }
 
 .chat-message .chat-message-body {
-  word-break: break-word;
+  overflow-wrap: anywhere;
   line-height: 1.4;
   position: relative;
   white-space: pre-wrap;
@@ -1395,29 +1386,6 @@ button.chat-room-link:hover {
   font-size: 0.8rem;
   z-index: 2;
   pointer-events: none;
-}
-
-.chat-room-mention-indicator {
-  margin-left: 6px;
-  padding: 0 4px;
-  background-color: var(--accent);
-  color: var(--text-on-accent);
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: bold;
-  line-height: 1.2rem;
-  animation: mention-pulse 1.5s infinite;
-}
-
-.chat-room-mention-indicator-noflash {
-  margin-left: 6px;
-  padding: 0 4px;
-  background-color: var(--accent);
-  color: var(--text-on-accent);
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: bold;
-  line-height: 1.2rem;
 }
 
 .mention-flash {
