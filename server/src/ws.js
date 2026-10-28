@@ -450,8 +450,15 @@ module.exports = function (fastify) {
     });
   }
 
-  function broadcastUserRoleChanged(userId, newRole) {
-    broadcast({ type: 'user_role_changed', userId, newRole });
+  function broadcastUserRoleChanged(user) {
+    // Clients update both the directory (login, role, verified) and, when the
+    // affected user is the current one, the session user without a reload.
+    broadcast({
+      type: 'user_role_changed',
+      userId: user.id,
+      newRole: user.role,
+      user,
+    });
   }
 
   function broadcastInvitesChanged(invites) {

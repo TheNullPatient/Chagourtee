@@ -57,7 +57,12 @@ module.exports = function (fastify) {
 
     // Реалтайм: уведомляем клиентов об изменении роли пользователя
     if (fastify.broadcastUserRoleChanged) {
-      fastify.broadcastUserRoleChanged(userId, role);
+      const updatedUser = db.prepare(
+        'SELECT id, login, role, verified, created_at FROM users WHERE id = ?'
+      ).get(userId);
+      if (updatedUser) {
+        fastify.broadcastUserRoleChanged(updatedUser);
+      }
     }
 
     return { ok: true };

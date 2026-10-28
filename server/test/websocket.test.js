@@ -188,3 +188,76 @@ test('websocket rejects unauthenticated clients and forged events', async () => 
 
   verify();
 });
+
+test('role changes are broadcast with the updated user object', async () => {
+  const { check, verify } = createChecker();
+  const workspace = createWorkspace('ws_role');
+
+  const db = createDb(workspace.dbPath);
+  const ownerLogin = unique('ws_owner');
+  const memberLogin = unique('ws_member');
+  const ownerId = seedUser(db, ownerLogin, { role: 'owner' });
+  const memberId = seedUser(db, memberLogin);
+
+  function createSession(userId) {
+    const id = unique('ws_session');
+    db.prepare(
+      'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)'
+    ).run(id, userId, new Date(Date.now() + 86400000).toISOString());
+    return id;
+  }
+
+  const ownerSession = createSession(ownerId);
+  const memberSession = createSession(memberId);
+  db.close();
+
+  const server = await startServerOrCleanup(workspace);
+  let serverOutput = '';
+
+  try {
+    const owner = connect(server.port, ownerSession);
+    const member = connect(server.port, memberSession);
+    await Promise.all([
+      new Promise((resolve) => owner.ws.on('open', resolve)),
+      new Promise((resolve) => member.ws.on('open', resolve)),
+    ]);
+    await delay(200);
+
+    const response = await fetch(`${server.baseUrl}/api/users/${memberId}/role`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `chagourtee_sid=${ownerSession}`,
+      },
+      body: JSON.stringify({ role: 'moderator' }),
+    });
+    check('owner can change a member role', response.ok, String(response.status));
+
+    const event = await waitFor(
+      member.messages,
+      (message) =>
+        message.type === 'user_role_changed' && Number(message.userId) === memberId
+    );
+    check('role change is delivered in realtime', event !== null);
+    check(
+      'role change carries the updated user object',
+      event?.user?.id === memberId &&
+        event.user.login === memberLogin &&
+        event.user.role === 'moderator' &&
+        event.newRole === 'moderator',
+      JSON.stringify(event)
+    );
+
+    owner.ws.close();
+    member.ws.close();
+  } finally {
+    serverOutput = await server.stop();
+    removeWorkspace(workspace);
+  }
+
+  if (serverOutput && /error/i.test(serverOutput)) {
+    process.stderr.write(`\nServer output:\n${serverOutput}\n`);
+  }
+
+  verify();
+});
