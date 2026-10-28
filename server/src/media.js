@@ -748,6 +748,9 @@ async function mediaPlugin(fastify, options) {
         async () => {
             const uploadSettings = getUploadSettings();
             const storageSettings = getStorageSettings();
+            // Usage is exposed to every authenticated user so the client can show
+            // quota indicators without calling the owner-only settings endpoint.
+            const usage = getCurrentStorageUsage();
             return {
                 uploadsEnabled: uploadSettings.uploadsEnabled,
                 unlimited: uploadSettings.unlimited,
@@ -755,6 +758,8 @@ async function mediaPlugin(fastify, options) {
                 storage: {
                     maxStorageSize: storageSettings.maxStorageSize,
                     cleanupStrategy: storageSettings.cleanupStrategy,
+                    totalBytes: usage.totalBytes,
+                    filesCount: usage.filesCount,
                 },
             };
         }

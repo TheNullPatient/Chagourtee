@@ -84,6 +84,27 @@ test('media uploads, downloads and quotas', async () => {
   const baseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
 
   try {
+    // --- Settings are readable by members and include storage usage --------
+    const memberId = seedUser(db, 'media_member');
+    const memberSettingsResponse = await fetch(`${baseUrl}/api/media/settings`, {
+      headers: { 'x-test-user': String(memberId) },
+    });
+    const memberSettings = await memberSettingsResponse.json();
+    check(
+      'members can read media settings',
+      memberSettingsResponse.status === 200,
+      `${memberSettingsResponse.status}`
+    );
+    check(
+      'media settings expose the storage quota and usage',
+      memberSettings.storage &&
+        (memberSettings.storage.maxStorageSize === null ||
+          typeof memberSettings.storage.maxStorageSize === 'number') &&
+        typeof memberSettings.storage.totalBytes === 'number' &&
+        typeof memberSettings.storage.filesCount === 'number',
+      JSON.stringify(memberSettings.storage)
+    );
+
     // --- Upload, encryption, download and ranges ---------------------------
     setSettings({ maxFileSize: 1024 * 1024, maxStorageSize: 0 });
     const payload = Buffer.alloc(5000);

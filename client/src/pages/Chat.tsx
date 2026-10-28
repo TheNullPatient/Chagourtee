@@ -1111,18 +1111,14 @@ export default function Chat() {
   useEffect(() => {
     media
       .settings()
-      .then((settings) => setMediaSettings(settings))
-      .catch((error) => console.error('Failed to load media settings:', error));
-
-    media
-      .getStorageSettings()
-      .then((data) => {
+      .then((settings) => {
+        setMediaSettings(settings);
         setStorageUsage({
-          totalBytes: data.totalBytes,
-          maxStorageSize: data.maxStorageSize
+          totalBytes: settings.storage?.totalBytes ?? 0,
+          maxStorageSize: settings.storage?.maxStorageSize ?? null,
         });
       })
-      .catch((error) => console.error('Failed to load storage usage:', error));
+      .catch((error) => console.error('Failed to load media settings:', error));
   }, []);
 
   const isUploadEnabled = mediaSettings ? mediaSettings.uploadsEnabled : true;

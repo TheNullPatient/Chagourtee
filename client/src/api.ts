@@ -136,8 +136,10 @@ export type MediaUploadSettings = {
   unlimited: boolean;
   maxFileSize: number | null;
   storage?: {
-    maxStorageSize: number;
+    maxStorageSize: number | null;
     cleanupStrategy: 'block' | 'delete_oldest';
+    totalBytes: number;
+    filesCount: number;
   };
 };
 
