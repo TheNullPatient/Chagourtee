@@ -53,18 +53,4 @@ module.exports = function (fastify) {
 
     return { ok: true, login: newLoginTrim };
   });
-
-  fastify.post('/api/profile/codeword', {
-    preHandler: [fastify.requireAuth],
-  }, async (request, reply) => {
-    const { codeword } = request.body || {};
-    const user = db.prepare('SELECT id, verified FROM users WHERE id = ?').get(request.session.userId);
-    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
-    if (user.verified) return reply.code(400).send({ error: 'Already verified' });
-    if (!codeword || typeof codeword !== 'string') {
-      return reply.code(400).send({ error: 'Codeword required' });
-    }
-    db.prepare('UPDATE users SET codeword_hash = ? WHERE id = ?').run(hashPassword(codeword), user.id);
-    return { ok: true, message: 'Codeword submitted; wait for owner verification' };
-  });
 };

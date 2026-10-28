@@ -37,8 +37,8 @@ function registerFailedCodeAttempt(userId) {
 module.exports = function (fastify) {
   const db = fastify.db;
 
-  // Public endpoint: the registration page needs to know whether a codeword
-  // is required before the user has a session.
+  // Public endpoint: the registration page needs to know whether a comment
+  // field should be shown before the user has a session.
   fastify.get('/api/verification/status', async () => {
     const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
     return { enabled: setting ? !!setting.enabled : false };
@@ -114,28 +114,6 @@ module.exports = function (fastify) {
       ORDER BY created_at ASC
     `).all();
     return { pending: rows };
-  });
-
-  // Проверка кодового слова для конкретного пользователя (для ручной верификации)
-  fastify.post('/api/verification/check', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
-  }, async (request, reply) => {
-    const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
-    if (!setting || !setting.enabled) {
-      return reply.code(400).send({ error: 'Verification system is disabled' });
-    }
-    
-    const { userId, codeword } = request.body || {};
-    if (!userId || codeword === undefined) {
-      return reply.code(400).send({ error: 'userId and codeword required' });
-    }
-    const user = db.prepare('SELECT id, codeword_hash FROM users WHERE id = ? AND verified = 0').get(Number(userId));
-    if (!user) return reply.code(404).send({ error: 'User not found or already verified' });
-    if (!user.codeword_hash) {
-      return { match: false, message: 'User has no codeword set' };
-    }
-    const match = verifyPassword(codeword, user.codeword_hash);
-    return { match };
   });
 
   // Одобрение пользователя (ручная верификация)

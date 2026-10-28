@@ -60,7 +60,7 @@ async function run() {
   // END: Corrected bootstrap validation
 
   server.decorate('getUser', function (userId) {
-    const row = db.prepare('SELECT id, login, role, verified, codeword_hash FROM users WHERE id = ?').get(userId);
+    const row = db.prepare('SELECT id, login, role, verified FROM users WHERE id = ?').get(userId);
     return row ? { ...row, verified: Boolean(row.verified) } : null;
   });
 

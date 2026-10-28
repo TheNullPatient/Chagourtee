@@ -107,7 +107,7 @@ function authRoutes(fastify, _opts, done) {
         return;
       }
       if (!user.verified && !request.url.startsWith('/api/auth/') && !request.url.startsWith('/api/profile')) {
-        const allowed = ['/api/auth/me', '/api/auth/logout', '/api/profile/change-password', '/api/profile/change-login', '/api/profile/codeword'];
+        const allowed = ['/api/auth/me', '/api/auth/logout', '/api/profile/change-password', '/api/profile/change-login'];
         const allowedMatch = allowed.some((a) => request.url === a || request.url.startsWith(a + '?'));
         if (!allowedMatch) {
           return reply.code(403).send({ error: 'Account pending verification' });

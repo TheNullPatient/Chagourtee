@@ -433,13 +433,23 @@ export const serverVersion = {
 
 export const verification = {
   status: () => api<{ enabled: boolean }>('/api/verification/status'),
-  settings: () => api<{ enabled: boolean }>('/api/verification/settings'),
+  settings: () => api<{ enabled: boolean, deleteCommentOnApprove: boolean }>('/api/verification/settings'),
   updateSettings: (enabled: boolean) => 
     api<{ ok: boolean, enabled: boolean }>('/api/verification/settings', {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }),
-  pending: () => api<{ pending: { id: number; login: string; created_at: string }[] }>('/api/verification/pending'),
+  pending: () => api<{ pending: { id: number; login: string; created_at: string; registration_comment: string | null }[] }>('/api/verification/pending'),
+  approve: (userId: number) =>
+    api<{ ok: boolean }>('/api/verification/approve', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    }),
+  reject: (userId: number) =>
+    api<{ ok: boolean }>('/api/verification/reject', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    }),
   listCodes: () => 
     api<{ codes: {id: number, created_by_login: string, used: number, created_at: string, expires_at: string}[] }>('/api/verification/codes'),
   createCode: (customCode?: string) => 
@@ -478,15 +488,6 @@ export const users = {
       method: 'DELETE',
       body: JSON.stringify({ reason }),
     }),
-  setCodeword: (userId: number, codeword: string) =>
-    api<{ ok: boolean }>(`/api/users/${userId}/codeword`, {
-      method: 'PATCH',
-      body: JSON.stringify({ codeword }),
-    }),
-  disableCodewordCheck: (userId: number) =>
-    api<{ ok: boolean }>(`/api/users/${userId}/disable-codeword-check`, {
-      method: 'POST',
-    }),
 };
 
 export const profile = {
@@ -499,11 +500,6 @@ export const profile = {
     api<{ ok: boolean, login: string }>('/api/profile/change-login', {
       method: 'POST',
       body: JSON.stringify({ password, newLogin }),
-    }),
-  setCodeword: (codeword: string) =>
-    api<{ ok: boolean, message: string }>('/api/profile/codeword', {
-      method: 'POST',
-      body: JSON.stringify({ codeword }),
     }),
 };
 

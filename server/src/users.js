@@ -112,44 +112,4 @@ module.exports = function (fastify) {
 
     return { ok: true };
   });
-
-  fastify.patch('/api/users/:id/codeword', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
-  }, async (request, reply) => {
-    const userId = Number(request.params.id);
-    const { codeword } = request.body || {};
-    const target = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
-    if (!target) return reply.code(404).send({ error: 'User not found' });
-    const { hashPassword } = require('./auth');
-    const codewordHash = codeword ? hashPassword(codeword) : null;
-    db.prepare('UPDATE users SET codeword_hash = ? WHERE id = ?').run(codewordHash, userId);
-    return { ok: true };
-  });
-
-  fastify.post('/api/users/:id/disable-codeword-check', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
-  }, async (request, reply) => {
-    const userId = Number(request.params.id);
-    const target = db.prepare('SELECT id, verified FROM users WHERE id = ?').get(userId);
-    if (!target) return reply.code(404).send({ error: 'User not found' });
-    db.prepare('UPDATE users SET verified = 1 WHERE id = ?').run(userId);
-    
-    // Реалтайм: уведомляем самого пользователя и обновляем списки пользователей
-    fastify.broadcastToUser(userId, {
-      type: 'user_verified',
-      userId
-    });
-
-    if (fastify.broadcastAll) {
-      const updatedUser = db.prepare('SELECT id, login, role, verified, created_at FROM users WHERE id = ?').get(userId);
-      if (updatedUser) {
-        fastify.broadcastAll({
-          type: 'user_verification_changed',
-          user: updatedUser
-        });
-      }
-    }
-    
-    return { ok: true };
-  });
 };

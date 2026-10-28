@@ -598,8 +598,7 @@ export default function Admin() {
     }
     
     try {
-      // Using the correct API endpoint for approving users
-      await usersApi.disableCodewordCheck(userId);
+      await verificationApi.approve(userId);
       showToast('Пользователь верифицирован', 'success');
       // Обновление будет происходить через WebSocket, так что не нужно вызывать load() здесь
     } catch (err) {
@@ -696,40 +695,6 @@ export default function Admin() {
     } catch (error) {
       DEBUG_MODE && console.error('Failed to enable verification:', error);
       showToast('Ошибка при включении верификации', 'error');
-    }
-  };
-
-  const approveUser = async (userId: number) => {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может верифицировать пользователей', 'error');
-      return;
-    }
-    
-    try {
-      // Using the correct API endpoint for approving users
-      await usersApi.disableCodewordCheck(userId);
-      showToast('Пользователь верифицирован', 'success');
-      // Обновление будет происходить через WebSocket, так что не нужно вызывать load() здесь
-    } catch (error) {
-      DEBUG_MODE && console.error('Failed to approve user:', error);
-      showToast('Ошибка при подтверждении пользователя', 'error');
-    }
-  };
-
-  const rejectUser = async (userId: number) => {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может отклонять пользователей', 'error');
-      return;
-    }
-    
-    try {
-      // Rejecting by deleting the user with a rejection reason
-      await usersApi.delete(userId, 'Ваша заявка на верификацию была отклонена');
-      showToast('Пользователь отклонён', 'success');
-      // Обновление будет происходить через WebSocket, так что не нужно вызывать load() здесь
-    } catch (error) {
-      DEBUG_MODE && console.error('Failed to reject user:', error);
-      showToast('Ошибка при отклонении пользователя', 'error');
     }
   };
 
@@ -1382,10 +1347,10 @@ export default function Admin() {
 
                     {!u.verified && u.role === 'member' && verificationEnabled && (
                       <div className="admin-user-verify-row">
-                        <button type="button" onClick={() => approveUser(u.id)} className="admin-btn-grow">
+                        <button type="button" onClick={() => approve(u.id)} className="admin-btn-grow">
                           Подтвердить
                         </button>
-                        <button type="button" className="danger admin-btn-grow" onClick={() => rejectUser(u.id)}>
+                        <button type="button" className="danger admin-btn-grow" onClick={() => reject(u.id)}>
                           Отклонить
                         </button>
                       </div>
