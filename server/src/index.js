@@ -230,6 +230,15 @@ async function run() {
     }
 
     const userId = server.db.prepare('SELECT id FROM users WHERE login = ?').get(loginTrim).id;
+
+    // New accounts waiting for review must appear in the admin queue without
+    // a page reload.
+    const registeredUser = server.db
+      .prepare('SELECT verified FROM users WHERE id = ?')
+      .get(userId);
+    if (registeredUser && !registeredUser.verified && server.broadcastVerificationPendingChanged) {
+      server.broadcastVerificationPendingChanged();
+    }
     
     // After registering the first user, check if main room exists, if not create it
     if (isFirstUser) {

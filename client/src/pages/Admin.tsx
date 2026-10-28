@@ -300,6 +300,18 @@ export default function Admin() {
           }
           break;
 
+        case 'verification_pending_changed':
+          if (user.role === 'owner') {
+            // Новый участник или изменённый комментарий заявки
+            verificationApi.pending()
+              .then(res => setPending(res.pending))
+              .catch(() => {});
+            verificationApi.comments()
+              .then(res => setSavedComments(res.comments))
+              .catch(() => {});
+          }
+          break;
+
         case 'user_role_changed':
         case 'user_updated':
         case 'user_verification_changed':

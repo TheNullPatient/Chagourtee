@@ -644,6 +644,18 @@ export default function Chat() {
           }
           break;
           
+        case 'user_deleted_admin':
+          if (typeof data.userId === 'number') {
+            setAllUsers(prev => prev.filter(u => u.id !== data.userId));
+            setOnlineUserIds(prev => {
+              const next = new Set(prev);
+              next.delete(data.userId);
+              return next;
+            });
+            setTypingUsers(prev => prev.filter(u => u.userId !== data.userId));
+          }
+          break;
+
         case 'user_role_changed':
         case 'user_updated':
         case 'user_verification_changed':

@@ -93,6 +93,12 @@ module.exports = function (fastify) {
       trimmed.length > 0 ? trimmed : null,
       user.id
     );
+
+    // Keep the owner's review queue in sync when the applicant edits the note.
+    if (fastify.broadcastVerificationPendingChanged) {
+      fastify.broadcastVerificationPendingChanged();
+    }
+
     return { ok: true, comment: trimmed.length > 0 ? trimmed : null };
   });
 };

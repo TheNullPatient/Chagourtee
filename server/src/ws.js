@@ -469,6 +469,11 @@ module.exports = function (fastify) {
     broadcast({ type: 'verification_codes_changed', codes });
   }
 
+  function broadcastVerificationPendingChanged() {
+    // Only signals that the moderation queue changed; admins refetch the data.
+    broadcast({ type: 'verification_pending_changed' });
+  }
+
   function broadcastVerificationSettingsUpdated(enabled, deleteCommentOnApprove) {
     broadcast({ type: 'verification_settings_updated', enabled, deleteCommentOnApprove });
   }
@@ -544,6 +549,7 @@ module.exports = function (fastify) {
   fastify.broadcastUserUpdated = broadcastUserUpdated;
   fastify.broadcastInvitesChanged = broadcastInvitesChanged;
   fastify.broadcastVerificationCodesChanged = broadcastVerificationCodesChanged;
+  fastify.broadcastVerificationPendingChanged = broadcastVerificationPendingChanged;
   fastify.broadcastVerificationSettingsUpdated = broadcastVerificationSettingsUpdated;
   fastify.broadcastServerSettingsUpdated = broadcastServerSettingsUpdated;
 

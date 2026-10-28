@@ -261,3 +261,76 @@ test('role changes are broadcast with the updated user object', async () => {
 
   verify();
 });
+
+test('pending registration and comment updates notify the moderation queue', async () => {
+  const { check, verify } = createChecker();
+  const workspace = createWorkspace('ws_pending');
+
+  const db = createDb(workspace.dbPath);
+  const ownerId = seedUser(db, unique('ws_owner'), { role: 'owner' });
+  const ownerSession = unique('ws_session');
+  db.prepare(
+    'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)'
+  ).run(ownerSession, ownerId, new Date(Date.now() + 86400000).toISOString());
+  db.prepare('DELETE FROM verification_settings').run();
+  db.prepare('INSERT INTO verification_settings (enabled) VALUES (1)').run();
+  const inviteId = unique('ws_invite');
+  db.prepare('INSERT INTO invites (id, created_by) VALUES (?, ?)').run(inviteId, ownerId);
+  db.close();
+
+  const server = await startServerOrCleanup(workspace);
+  let serverOutput = '';
+
+  try {
+    const owner = connect(server.port, ownerSession);
+    await new Promise((resolve) => owner.ws.on('open', resolve));
+    await delay(200);
+
+    const registerResponse = await fetch(`${server.baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inviteId,
+        login: `pending${String(Date.now()).slice(-8)}`,
+        password: 'secret123',
+        comment: 'Let me in',
+      }),
+    });
+    check('pending registration succeeds', registerResponse.ok, String(registerResponse.status));
+    const memberCookie = registerResponse.headers.get('set-cookie').split(';')[0];
+
+    const registeredEvent = await waitFor(
+      owner.messages,
+      (message) => message.type === 'verification_pending_changed'
+    );
+    check('new pending user triggers a realtime queue refresh', registeredEvent !== null);
+
+    owner.messages.length = 0;
+    const commentResponse = await fetch(
+      `${server.baseUrl}/api/profile/registration-comment`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Cookie: memberCookie },
+        body: JSON.stringify({ comment: 'Updated note' }),
+      }
+    );
+    check('pending user can update the comment', commentResponse.ok, String(commentResponse.status));
+
+    const commentEvent = await waitFor(
+      owner.messages,
+      (message) => message.type === 'verification_pending_changed'
+    );
+    check('comment update triggers a realtime queue refresh', commentEvent !== null);
+
+    owner.ws.close();
+  } finally {
+    serverOutput = await server.stop();
+    removeWorkspace(workspace);
+  }
+
+  if (serverOutput && /error/i.test(serverOutput)) {
+    process.stderr.write(`\nServer output:\n${serverOutput}\n`);
+  }
+
+  verify();
+});
