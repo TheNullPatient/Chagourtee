@@ -666,7 +666,7 @@ export default function Admin() {
         setConfirmModal({
           isOpen: true,
           title: 'Отключить верификацию?',
-          message: `Есть ${pending.length} пользователей ожидающих подтверждения. Сначала обработайте их в разделе "Верификация".`,
+          message: `Есть ${pending.length} пользователей, ожидающих подтверждения. При отключении верификации они будут подтверждены автоматически.`,
           confirmText: 'Всё равно отключить',
           cancelText: 'Отмена',
           variant: 'warning',

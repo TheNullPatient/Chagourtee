@@ -17,17 +17,6 @@ const { createDb } = require('../src/db');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function waitForClose(ws) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve({ code: null, reason: 'timeout' }), 3000);
-    ws.on('close', (code, reason) => {
-      clearTimeout(timer);
-      resolve({ code, reason: reason.toString() });
-    });
-    ws.on('error', () => {});
-  });
-}
-
 test('unverified accounts are gated over HTTP and WebSocket', async () => {
   const { check, verify } = createChecker();
   const workspace = createWorkspace('verification-gate');
@@ -168,15 +157,62 @@ test('unverified accounts are gated over HTTP and WebSocket', async () => {
       );
     }
 
-    const blockedSocket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
+    const unverifiedSocket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
       headers: { Cookie: memberSession },
     });
-    const closed = await waitForClose(blockedSocket);
+    const unverifiedEvents = [];
+    unverifiedSocket.on('message', (raw) => {
+      try {
+        unverifiedEvents.push(JSON.parse(raw.toString()));
+      } catch {
+        // ignore
+      }
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('WebSocket did not open')), 3000);
+      unverifiedSocket.once('open', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      unverifiedSocket.once('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+
+    unverifiedSocket.send(JSON.stringify({ type: 'join', roomId }));
+    await delay(150);
     check(
-      'unverified WebSocket connection is rejected',
-      closed.code === 4003 && closed.reason === 'Verification required',
-      JSON.stringify(closed)
+      'unverified WebSocket cannot join a room',
+      unverifiedEvents.some(
+        (event) => event.type === 'error' && event.code === 'ACCOUNT_NOT_VERIFIED'
+      ),
+      JSON.stringify(unverifiedEvents)
     );
+
+    const ownerMessage = await request(
+      'POST',
+      `/api/rooms/${roomId}/messages`,
+      ownerSession,
+      { body: 'SECRET_BODY_123' }
+    );
+    check('owner can still send messages', ownerMessage.status === 200, JSON.stringify(ownerMessage));
+    await delay(300);
+    check(
+      'unverified WebSocket receives no message bodies or previews',
+      !unverifiedEvents.some(
+        (event) =>
+          (event.type === 'message' && event.message?.body === 'SECRET_BODY_123') ||
+          (event.type === 'room_message' && String(event.preview || '').includes('SECRET_BODY_123'))
+      ),
+      JSON.stringify(unverifiedEvents)
+    );
+    check(
+      'unverified WebSocket does not receive the presence snapshot',
+      !unverifiedEvents.some((event) => event.type === 'presence_snapshot'),
+      JSON.stringify(unverifiedEvents)
+    );
+    unverifiedSocket.close();
 
     // Disabling verification must approve everyone who was waiting.
     const disable = await request('POST', '/api/verification/settings', ownerSession, {

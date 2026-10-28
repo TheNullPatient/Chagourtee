@@ -53,8 +53,8 @@ module.exports = function (fastify) {
       return;
     }
 
-    // Unverified accounts must not receive room traffic or previews, even if
-    // they manage to open a WebSocket connection directly.
+    // Unverified accounts may keep a socket open so they can receive
+    // user_verified, but they must not join rooms or receive broadcasts.
     const connectionUser = fastify.db
       .prepare('SELECT verified FROM users WHERE id = ?')
       .get(userId);
@@ -65,10 +65,7 @@ module.exports = function (fastify) {
     const verificationSetting = fastify.db
       .prepare('SELECT enabled FROM verification_settings LIMIT 1')
       .get();
-    if (verificationSetting && verificationSetting.enabled && !connectionUser.verified) {
-      ws.close(4003, 'Verification required');
-      return;
-    }
+    ws.isVerified = Boolean(connectionUser.verified) || !(verificationSetting && verificationSetting.enabled);
     
     // Set up heartbeat mechanism
     let heartbeatInterval = setInterval(() => {
@@ -99,7 +96,7 @@ module.exports = function (fastify) {
 
     const user = fastify.getUser(userId);
     // Defer the presence broadcast to ensure connection is fully established
-    setTimeout(() => {
+    if (ws.isVerified) setTimeout(() => {
       if (ws.readyState !== WebSocket.OPEN) return;
       broadcast({ type: 'presence', userId, login: user?.login, online: true });
       // Send current online users snapshot to the newly connected client
@@ -151,6 +148,14 @@ module.exports = function (fastify) {
           }
         }
         if (msg.type === 'join' && isValidRoomId(msg.roomId)) {
+          if (!ws.isVerified) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              code: 'ACCOUNT_NOT_VERIFIED',
+              message: 'Account verification required',
+            }));
+            return;
+          }
           const roomId = Number(msg.roomId);
           const room = fastify.db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
           if (!room) {
@@ -281,7 +286,7 @@ module.exports = function (fastify) {
   function broadcast(payload) {
     const data = JSON.stringify(payload);
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN) {
+      if (c.readyState === WebSocket.OPEN && c.isVerified) {
         try {
           c.send(data);
         } catch (err) {
@@ -305,7 +310,7 @@ module.exports = function (fastify) {
     });
 
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.currentRoomId === roomId) {
+      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
         try {
           c.send(payload);
         } catch (err) {
@@ -327,7 +332,7 @@ module.exports = function (fastify) {
     });
 
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.currentRoomId === roomId) {
+      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
         try {
           c.send(payload);
         } catch (err) {
@@ -349,7 +354,7 @@ module.exports = function (fastify) {
     });
 
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.currentRoomId === roomId) {
+      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
         try {
           c.send(payload);
         } catch (err) {
@@ -371,7 +376,7 @@ module.exports = function (fastify) {
     });
 
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.currentRoomId === roomId) {
+      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
         try {
           c.send(payload);
         } catch (err) {
@@ -390,7 +395,7 @@ module.exports = function (fastify) {
     }
     let count = 0;
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.currentRoomId === roomId) {
+      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
         // Don't send the message back to the sender
         if (c === senderWs) {
           return; // Skip the sender
@@ -433,7 +438,7 @@ module.exports = function (fastify) {
   function broadcastUserUpdated(user) {
     const payload = JSON.stringify({ type: 'user_updated', user });
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN) {
+      if (c.readyState === WebSocket.OPEN && c.isVerified) {
         try {
           c.send(payload);
         } catch (err) {
@@ -504,6 +509,9 @@ module.exports = function (fastify) {
       userClients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
           try {
+            if (payload && payload.type === 'user_verified') {
+              client.isVerified = true;
+            }
             client.send(data);
           } catch (err) {
             if (err.code !== 'ECONNRESET' && err.code !== 'EPIPE') {
