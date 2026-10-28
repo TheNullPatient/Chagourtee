@@ -1224,6 +1224,20 @@ button.chat-room-link:hover {
   align-self: center;
 }
 
+/* Marks the viewer's own messages; every user only sees it on their own. */
+.chat-message-you-label {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--accent);
+  background: var(--accent-light);
+  border-radius: 1em;
+  padding: 0.05em 0.5em;
+  white-space: nowrap;
+}
+
 /* Style for editing indicator */
 .editing-indicator {
   font-size: 0.7em;

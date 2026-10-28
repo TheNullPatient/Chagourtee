@@ -2533,6 +2533,11 @@ export default function Chat() {
                                 <Marquee className="chat-message-author" animationDuration={8}>
                                   {allUsers.find(u => u.id === m.user_id)?.login || m.login}
                                 </Marquee>
+                                {user && m.user_id === user.id && (
+                                  <span className="chat-message-you-label" title="Это ваше сообщение">
+                                    Вы
+                                  </span>
+                                )}
                               </div>
                               <span className="chat-message-time">
                                 {new Date(m.created_at).toLocaleString()}
