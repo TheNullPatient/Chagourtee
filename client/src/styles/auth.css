@@ -164,6 +164,28 @@
   font-size: 1rem;
 }
 
+.verify-comment-lead {
+  margin-bottom: 0.5rem;
+}
+
+.verify-comment-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.verify-comment-counter {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.verify-comment-save {
+  flex: 0 0 auto;
+}
+
 .error-margin-top {
   margin: 0.5rem 0 0;
 }

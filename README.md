@@ -2,7 +2,7 @@
 
 # Chagourtee
 
-Self-hosted messenger: the owner runs the server on their computer, creates invites and verifies participants with a codeword. In perspective — federation between servers.
+Self-hosted messenger: the owner runs the server on their computer, creates invites and verifies participants manually or with one-time codes. In perspective — federation between servers.
 
 [English version](./README.md) | [Версия на русском](./README.ru.md)
 
@@ -14,7 +14,7 @@ Self-hosted messenger: the owner runs the server on their computer, creates invi
 ## Features
 
 - **Self-hosting**: Full control over your data, deployment on your own server
-- **User verification**: Ability to verify participants with a codeword
+- **User verification**: Owner approval or one-time codes, with an optional registration comment for context
 - **Real-time chat**: Real-time communication with typing and presence indicators
 - **User management**: Owner, moderator and member roles
 - **Security**: Authorization via sessions, password hashing
@@ -77,8 +77,8 @@ If there are no users in the database yet, the first owner can be created as fol
 
 - Owner (or moderator) creates an invite in Admin and shares the link like:  
   `https://your-address/register?invite=INVITE_CODE`
-- Participant goes to the link, enters login, password and codeword if required.
-- If a codeword is specified, the account remains in "waiting for verification" status until the owner in Admin checks the word and clicks "Approve".
+- Participant goes to the link, enters login and password, and may leave a comment for the owner if verification is enabled.
+- The account stays in "waiting for verification" until the owner approves it in Admin or the participant uses a one-time code. The owner can choose to delete the comment automatically after approval.
 
 ## Build System
 
@@ -259,7 +259,7 @@ The server integration tests run from the project root:
 npm test
 ```
 
-Each test creates a temporary SQLite database and its own media directory (`CHAGOURTEE_MEDIA_DIR`), so the real `server/data/chagourtee.db` and `server/data/media` are never modified. The suite covers schema migrations, foreign keys and media cleanup when rooms/users are deleted, media uploads and downloads with quotas, audio transcoding, verification codes and registration, and WebSocket event validation.
+Each test creates a temporary SQLite database and its own media directory (`CHAGOURTEE_MEDIA_DIR`), so the real `server/data/chagourtee.db` and `server/data/media` are never modified. The suite covers schema migrations, foreign keys and media cleanup when rooms/users are deleted, media uploads and downloads with quotas, audio transcoding, registration comments, verification and its server gate, and WebSocket event validation.
 
 Run a single suite directly:
 
@@ -284,8 +284,9 @@ npm run lint
 - `GET/POST/PATCH/DELETE /api/rooms` – rooms (CRUD for owner/moderator)
 - `GET /api/rooms/:id/messages`, `POST /api/rooms/:id/messages` – messages
 - `GET/POST/DELETE /api/invites` – invites
-- `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – verification by codeword
-- `POST /api/profile/change-password`, `change-login`, `codeword` – profile
+- `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – manual verification
+- `GET/PATCH /api/profile/registration-comment` – pending user's comment for the owner
+- `POST /api/profile/change-password`, `change-login` – profile
 - WebSocket `/ws` – new messages, typing, presence (after login via cookie)
 
 ## Architecture
@@ -315,6 +316,7 @@ Backend built on Fastify using SQLite for data storage:
 - Session protection via cookies with httpOnly and secure settings
 - Permission checks for access to protected routes
 - User verification checks for specific actions
+- Unverified accounts are blocked from the REST API and WebSocket until approval
 - Protection against unauthorized room access
 
 ## Functional capabilities
@@ -332,7 +334,7 @@ Backend built on Fastify using SQLite for data storage:
 - Creating and renaming rooms
 - Managing all users (including assigning moderator roles)
 - Creating invites with restrictions
-- Verifying users by codeword
+- Verifying users manually or with one-time codes
 - Full access to admin panel
 - Deleting any messages
 - Editing information about any users

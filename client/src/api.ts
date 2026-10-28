@@ -501,6 +501,13 @@ export const profile = {
       method: 'POST',
       body: JSON.stringify({ password, newLogin }),
     }),
+  getRegistrationComment: () =>
+    api<{ comment: string | null }>('/api/profile/registration-comment'),
+  updateRegistrationComment: (comment: string) =>
+    api<{ ok: boolean, comment: string | null }>('/api/profile/registration-comment', {
+      method: 'PATCH',
+      body: JSON.stringify({ comment }),
+    }),
 };
 
 // Export WebSocket related functions

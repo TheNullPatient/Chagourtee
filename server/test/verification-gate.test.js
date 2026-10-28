@@ -89,6 +89,39 @@ test('unverified accounts are gated over HTTP and WebSocket', async () => {
     const memberSession = registerResponse.headers.get('set-cookie').split(';')[0];
     const memberId = registerBody.user.id;
 
+    const ownComment = await fetch(`${server.baseUrl}/api/profile/registration-comment`, {
+      headers: { cookie: memberSession },
+    });
+    const ownCommentBody = await ownComment.json();
+    check(
+      'pending user can read their own registration comment',
+      ownComment.status === 200 && ownCommentBody.comment === 'Invited by the owner',
+      JSON.stringify(ownCommentBody)
+    );
+
+    const updateComment = await fetch(`${server.baseUrl}/api/profile/registration-comment`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie: memberSession },
+      body: JSON.stringify({ comment: '  Updated contact: @owner  ' }),
+    });
+    const updateCommentBody = await updateComment.json();
+    check(
+      'pending user can update the comment',
+      updateComment.status === 200 && updateCommentBody.comment === 'Updated contact: @owner',
+      JSON.stringify(updateCommentBody)
+    );
+
+    const tooLongComment = await fetch(`${server.baseUrl}/api/profile/registration-comment`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie: memberSession },
+      body: JSON.stringify({ comment: 'x'.repeat(501) }),
+    });
+    check(
+      'too long comments are rejected',
+      tooLongComment.status === 400,
+      await tooLongComment.text()
+    );
+
     const blocked = [
       ['GET', '/api/rooms'],
       ['GET', '/api/media/settings'],
@@ -161,8 +194,19 @@ test('unverified accounts are gated over HTTP and WebSocket', async () => {
     );
     check(
       'disabling verification keeps the comment by default',
-      memberRow.registration_comment === 'Invited by the owner',
+      memberRow.registration_comment === 'Updated contact: @owner',
       JSON.stringify(memberRow)
+    );
+
+    const verifiedCommentUpdate = await fetch(`${server.baseUrl}/api/profile/registration-comment`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie: memberSession },
+      body: JSON.stringify({ comment: 'late update' }),
+    });
+    check(
+      'verified users cannot edit the registration comment',
+      verifiedCommentUpdate.status === 400,
+      await verifiedCommentUpdate.text()
     );
 
     const meAfterDisable = await request('GET', '/api/auth/me', memberSession);

@@ -11,6 +11,17 @@ export const errorTranslations: Record<string, string> = {
   'Login must be 2-32 characters long and contain only letters and numbers': 'Логин должен быть длиной 2-32 символа и содержать только буквы и цифры',
   'Account verification required': 'Требуется подтверждение аккаунта',
   'Account pending verification': 'Аккаунт ожидает подтверждения',
+  'Account is already verified': 'Аккаунт уже подтверждён',
+  'Comment must be a string': 'Комментарий должен быть строкой',
+  'Comment must not exceed 500 characters': 'Комментарий не должен превышать 500 символов',
+  'Invalid or expired code': 'Неверный или просроченный код',
+  'Code has expired': 'Срок действия кода истёк',
+  'Code already exists': 'Такой код уже существует',
+  'Too many verification attempts. Try again later.':
+    'Слишком много попыток верификации. Попробуйте позже.',
+  'Verification system is disabled': 'Система верификации отключена',
+  'userId required': 'Не указан пользователь',
+  'User not found or already verified': 'Пользователь не найден или уже подтверждён',
   
   // Generic errors
   'Ошибка входа': 'Ошибка входа',

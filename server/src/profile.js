@@ -53,4 +53,46 @@ module.exports = function (fastify) {
 
     return { ok: true, login: newLoginTrim };
   });
+
+  // Pending users may refine the note the owner sees in the verification queue.
+  fastify.get('/api/profile/registration-comment', {
+    preHandler: [fastify.requireAuth],
+  }, async (request, reply) => {
+    const user = db
+      .prepare('SELECT id, verified, role, registration_comment FROM users WHERE id = ?')
+      .get(request.session.userId);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+    if (user.verified || user.role !== 'member') {
+      return reply.code(400).send({ error: 'Account is already verified' });
+    }
+    return { comment: user.registration_comment ?? null };
+  });
+
+  fastify.patch('/api/profile/registration-comment', {
+    preHandler: [fastify.requireAuth],
+  }, async (request, reply) => {
+    const { comment } = request.body || {};
+    if (comment !== null && comment !== undefined && typeof comment !== 'string') {
+      return reply.code(400).send({ error: 'Comment must be a string' });
+    }
+
+    const user = db
+      .prepare('SELECT id, verified, role FROM users WHERE id = ?')
+      .get(request.session.userId);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+    if (user.verified || user.role !== 'member') {
+      return reply.code(400).send({ error: 'Account is already verified' });
+    }
+
+    const trimmed = typeof comment === 'string' ? comment.trim() : '';
+    if (trimmed.length > 500) {
+      return reply.code(400).send({ error: 'Comment must not exceed 500 characters' });
+    }
+
+    db.prepare('UPDATE users SET registration_comment = ? WHERE id = ?').run(
+      trimmed.length > 0 ? trimmed : null,
+      user.id
+    );
+    return { ok: true, comment: trimmed.length > 0 ? trimmed : null };
+  });
 };
