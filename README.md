@@ -98,7 +98,8 @@ The project uses npm workspaces with separate client and server packages. Here's
 | `npm run update` | Update to latest version tag from remote |
 | `npm run db:backup` | Backup SQLite database to `data/backups/` |
 | `npm run generate-encryption-key` | Generate AES-256 media encryption key |
-| `npm run lint` | Run ESLint on client code (now configured) |
+| `npm run lint` | Run ESLint and Stylelint on client code |
+| `npm run lint:css` | Run Stylelint on CSS only |
 | `npm run clear-logs` | Clear the log file |
 | `npm run daemon:start` | Start server in background |
 | `npm run daemon:stop` | Stop running server |
