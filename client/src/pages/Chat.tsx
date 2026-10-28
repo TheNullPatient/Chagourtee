@@ -27,7 +27,8 @@ import InfoModal from '../components/InfoModal';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { TabletBottomNav } from '../components/TabletBottomNav';
-import { IconHome, IconUsers } from '../components/icons/Icons';
+import { IconHome, IconLock, IconUsers } from '../components/icons/Icons';
+import { errorTranslations } from '../localization/errors';
 
 // Global type extensions used by the drag-and-drop folder handling below
 declare global {
@@ -204,6 +205,9 @@ export default function Chat() {
   
   const roomId = routeRoomId ? Number(routeRoomId) : null;
   const [roomList, setRoomList] = useState<Room[]>([]);
+  const [roomsLoaded, setRoomsLoaded] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [sendText, setSendText] = useState('');
@@ -412,9 +416,21 @@ export default function Chat() {
   }, []);
 
   const loadRooms = useCallback(async () => {
-    const { rooms } = await roomsApi.list();
-    setRoomList(rooms);
+    try {
+      const { rooms } = await roomsApi.list();
+      setRoomList(rooms);
+    } catch (error) {
+      console.error('Failed to load rooms:', error);
+    } finally {
+      setRoomsLoaded(true);
+    }
   }, []);
+
+  const activeRoom = roomId ? roomList.find((r) => r.id === roomId) : undefined;
+  const activeRoomId = activeRoom?.id ?? null;
+  const activeRoomLocked = Boolean(activeRoom?.locked);
+  const activeRoomMissing = roomsLoaded && Boolean(roomId) && !activeRoom;
+  const canJoinRoom = roomsLoaded && activeRoomId !== null && !activeRoomLocked;
 
   // Function to update scroll button visibility based on scroll position
   const updateScrollButtonVisibility = useCallback(() => {
@@ -472,10 +488,8 @@ export default function Chat() {
 
   useEffect(() => {
     setReplyingTo(null);
-    if (roomId) {
-      loadMessages(roomId);
-    }
-    else {
+    setUnlockPassword('');
+    if (!roomId) {
       setMessages([]);
       setFirstUnreadMessageId(null);
       // When no room is selected, ensure scroll button is hidden and update visibility
@@ -483,11 +497,57 @@ export default function Chat() {
         setShowScrollButton(false);
         updateScrollButtonVisibility();
       }, 0);
+      return;
     }
-  }, [roomId, loadMessages, updateScrollButtonVisibility]);
+
+    // Wait until the room list is loaded: it tells us whether the room is
+    // locked or hidden from this user, so we do not fire a doomed request.
+    if (!roomsLoaded || activeRoomId === null || activeRoomLocked) {
+      setMessages([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    loadMessages(roomId)
+      .catch((error) => {
+        const message =
+          error instanceof Error ? error.message : 'Не удалось загрузить сообщения';
+        showToast(errorTranslations[message] || message, 'error');
+        setMessages([]);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [
+    roomId,
+    roomsLoaded,
+    activeRoomId,
+    activeRoomLocked,
+    loadMessages,
+    updateScrollButtonVisibility,
+    showToast,
+  ]);
+
+  const handleUnlockRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!roomId || !unlockPassword) return;
+    setUnlocking(true);
+    try {
+      await roomsApi.unlock(roomId, unlockPassword);
+      setUnlockPassword('');
+      await loadRooms();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Не удалось разблокировать комнату';
+      showToast(errorTranslations[message] || message, 'error');
+    } finally {
+      setUnlocking(false);
+    }
+  };
 
   const markRoomAsRead = useCallback(async () => {
-    if (!roomId || messages.length === 0) return;
+    if (!roomId || activeRoomLocked || !activeRoomId || messages.length === 0) return;
     const lastMessageId = messages[messages.length - 1]?.id;
     if (!lastMessageId) return;
 
@@ -519,7 +579,7 @@ export default function Chat() {
     } catch (error) {
       console.error('Failed to mark messages as read:', error);
     }
-  }, [roomId, messages]);
+  }, [roomId, messages, activeRoomLocked, activeRoomId]);
 
   // Keep a stable reference for scroll handlers without re-binding listeners
   useEffect(() => {
@@ -571,6 +631,12 @@ export default function Chat() {
               prev.map(r => (r.id === data.room.id ? { ...r, ...data.room } : r))
             );
           }
+          break;
+
+        case 'rooms_changed':
+          // Access levels, passwords and whitelists changed. Refetch because
+          // the list and lock state are per-user.
+          void loadRooms();
           break;
           
         case 'room_message':
@@ -1000,7 +1066,7 @@ export default function Chat() {
     };
 
     // Try to join room immediately
-    if (roomId) {
+    if (roomId && canJoinRoom) {
       joinRoomWithRetry();
     }
 
@@ -1010,6 +1076,12 @@ export default function Chat() {
       const wasConnected = hasConnectedRef.current;
       hasConnectedRef.current = true;
       if (!roomId) return;
+      if (wasConnected) {
+        // Access may have changed while offline, so always refresh the list.
+        void loadRooms();
+        void loadUsers();
+      }
+      if (!canJoinRoom) return;
       const ws = getWebSocket();
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'join', roomId }));
@@ -1017,8 +1089,6 @@ export default function Chat() {
       }
       if (wasConnected) {
         // Catch up on anything missed while the socket was down.
-        void loadRooms();
-        void loadUsers();
         void loadMessages(roomId);
       }
     };
@@ -1038,7 +1108,7 @@ export default function Chat() {
       timeouts.forEach((timeoutId) => clearTimeout(timeoutId));
       timeouts.clear();
     };
-  }, [roomId, user, loadMessages, loadRooms, loadUsers]); // Re-run when room or user changes so "typing" handler sees fresh user
+  }, [roomId, user, canJoinRoom, loadMessages, loadRooms, loadUsers]); // Re-run when room or user changes so "typing" handler sees fresh user
 
 
   function handleTyping() {
@@ -2087,6 +2157,22 @@ export default function Chat() {
                 </Marquee>
               </span>
               <div className="chat-room-indicators">
+                {r.locked && (
+                  <span
+                    className="chat-room-lock"
+                    title={
+                      r.password_required
+                        ? 'Комната защищена паролем'
+                        : r.member_only
+                          ? 'Доступ только по приглашению'
+                          : 'Комната заблокирована'
+                    }
+                  >
+                    <span className="icon-inline" aria-hidden>
+                      <IconLock />
+                    </span>
+                  </span>
+                )}
                 {mentionedRooms.has(r.id) && roomId !== r.id && (
                   <span className="chat-room-mention-indicator-noflash">@</span>
                 )}
@@ -2106,6 +2192,56 @@ export default function Chat() {
       <div className="chat-main">
         <div className="chat-main-content">
           {roomId ? (
+            !roomsLoaded ? (
+              <div className="chat-center-muted">Загрузка…</div>
+            ) : activeRoomMissing ? (
+              <div className="chat-locked-panel">
+                <div className="chat-locked-icon" aria-hidden>
+                  <IconLock />
+                </div>
+                <h2 className="chat-locked-title">Комната недоступна</h2>
+                <p className="chat-locked-text">
+                  Комната не найдена или у вас нет доступа к ней.
+                </p>
+                <Link to="/chat" className="chat-locked-back secondary">
+                  К списку комнат
+                </Link>
+              </div>
+            ) : activeRoomLocked ? (
+              <div className="chat-locked-panel">
+                <div className="chat-locked-icon" aria-hidden>
+                  <IconLock />
+                </div>
+                <h2 className="chat-locked-title">{activeRoom?.name}</h2>
+                {activeRoom?.password_required ? (
+                  <>
+                    <p className="chat-locked-text">
+                      Комната защищена паролем. Введите его, чтобы войти.
+                    </p>
+                    <form className="chat-unlock-form" onSubmit={handleUnlockRoom}>
+                      <input
+                        type="password"
+                        value={unlockPassword}
+                        onChange={(e) => setUnlockPassword(e.target.value)}
+                        placeholder="Пароль комнаты"
+                        autoComplete="current-password"
+                        autoFocus
+                      />
+                      <button type="submit" disabled={unlocking || !unlockPassword}>
+                        {unlocking ? 'Проверка…' : 'Войти'}
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <p className="chat-locked-text">
+                    Доступ к этой комнате есть только у приглашённых пользователей.
+                  </p>
+                )}
+                <Link to="/chat" className="chat-locked-back secondary">
+                  К списку комнат
+                </Link>
+              </div>
+            ) : (
             <>
               <div className="chat-header-desktop">
                 <Marquee>
@@ -2862,6 +2998,7 @@ export default function Chat() {
               
               {/* Removed the old selected files preview */}
             </>
+            )
           ) : (
             <div className="chat-center-muted">
               {user?.role === 'owner'

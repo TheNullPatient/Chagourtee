@@ -21,6 +21,7 @@ Self-hosted messenger: the owner runs the server on their computer, creates invi
 - **Administration**: Control panel for creating rooms and invites
 - **Message editing**: Ability to edit and delete own messages
 - **Message replies**: Quotes, jump to the original message and a notification for the replied-to user
+- **Room access levels**: Public, password-protected, private and invite-only rooms
 - **Message grouping**: Visual grouping of messages from the same user
 - **Multi-message selection**: For bulk deletion
 
@@ -261,7 +262,7 @@ The server integration tests run from the project root:
 npm test
 ```
 
-Each test creates a temporary SQLite database and its own media directory (`CHAGOURTEE_MEDIA_DIR`), so the real `server/data/chagourtee.db` and `server/data/media` are never modified. The suite covers schema migrations, foreign keys and media cleanup when rooms/users are deleted, media uploads and downloads with quotas, audio transcoding, registration comments, verification and its server gate, and WebSocket event validation.
+Each test creates a temporary SQLite database and its own media directory (`CHAGOURTEE_MEDIA_DIR`), so the real `server/data/chagourtee.db` and `server/data/media` are never modified. The suite covers schema migrations, foreign keys and media cleanup when rooms/users are deleted, media uploads and downloads with quotas, audio transcoding, registration comments, verification and its server gate, room access levels, and WebSocket event validation.
 
 Run a single suite directly:
 
@@ -283,7 +284,9 @@ npm run lint
 - `POST /api/auth/logout` – logout
 - `GET /api/auth/me` – current user
 - `POST /api/auth/register` – registration (inviteId or bootstrap)
-- `GET/POST/PATCH/DELETE /api/rooms` – rooms (CRUD for owner/moderator)
+- `GET/POST/PATCH/DELETE /api/rooms` – rooms (CRUD for the owner)
+- `GET/PUT /api/rooms/:id/members` – access list for private and invite-only rooms
+- `POST /api/rooms/:id/unlock` – enter a password-protected room
 - `GET /api/rooms/:id/messages`, `POST /api/rooms/:id/messages` – messages
 - `GET/POST/DELETE /api/invites` – invites
 - `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – manual verification
@@ -330,12 +333,14 @@ Backend built on Fastify using SQLite for data storage:
 - Viewing and filtering rooms
 - Sending, editing and deleting own messages
 - Replying to messages with a quote and a jump to the original
+- Entering password-protected rooms
 - Showing "typing..." status
 - Showing online status of other users
 - Changing personal data and password
 
 ### For administrators (owner):
 - Creating and renaming rooms
+- Configuring room access level, password and the invite list
 - Managing all users (including assigning moderator roles)
 - Creating invites with restrictions
 - Verifying users manually or with one-time codes

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../AuthContext';
-import type { Room, Invite, User, MediaStorageSettings } from '../api';
+import type { Room, Invite, User, MediaStorageSettings, RoomAccessLevel, RoomUpdateInput } from '../api';
 import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media } from '../api';
 import { useServerName } from '../ServerNameContext';
 import { initializeWebSocket, addMessageHandler, removeMessageHandler, addOpenHandler, removeOpenHandler } from '../websocket';
@@ -14,6 +14,7 @@ import {
   IconHash,
   IconHome,
   IconHourglass,
+  IconLock,
   IconMonitor,
   IconPencil,
   IconPlus,
@@ -102,6 +103,29 @@ export default function Admin() {
   // State for room creation modal
   const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
   const [newRoomNameInput, setNewRoomNameInput] = useState('');
+  const [newRoomAccessLevel, setNewRoomAccessLevel] = useState<RoomAccessLevel>('public');
+  const [newRoomPassword, setNewRoomPassword] = useState('');
+  const [newRoomMemberIds, setNewRoomMemberIds] = useState<number[]>([]);
+
+  // State for the room access modal
+  const [accessRoomId, setAccessRoomId] = useState<number | null>(null);
+  const [accessRoomLevel, setAccessRoomLevel] = useState<RoomAccessLevel>('public');
+  const [accessRoomPassword, setAccessRoomPassword] = useState('');
+  const [accessRoomMemberIds, setAccessRoomMemberIds] = useState<number[]>([]);
+  const [accessMembersLoading, setAccessMembersLoading] = useState(false);
+  const [accessSaving, setAccessSaving] = useState(false);
+
+  const accessRoom = rooms.find((room) => room.id === accessRoomId) || null;
+  const accessLevelHint: Record<RoomAccessLevel, string> = {
+    public: 'Комната видна всем, пароль не нужен.',
+    closed: 'Комната видна всем, но войти можно только по паролю.',
+    private: 'Комната скрыта из списка. Доступ есть только у выбранных пользователей.',
+    restricted: 'Комната видна в списке, но войти могут только выбранные пользователи.',
+  };
+  const assignableUsers = useMemo(
+    () => users.filter((u) => u.role === 'member'),
+    [users]
+  );
 
   const load = useCallback(async () => {
     try {
@@ -252,6 +276,14 @@ export default function Admin() {
               if (prev.some(r => r.id === data.room.id)) return prev;
               return [...prev, data.room];
             });
+          }
+          break;
+
+        case 'rooms_changed':
+          if (user.role === 'owner') {
+            roomsApi.list()
+              .then((res) => setRooms(res.rooms))
+              .catch(() => {});
           }
           break;
 
@@ -491,13 +523,82 @@ export default function Admin() {
     }
 
     try {
-      await roomsApi.create(trimmedName);
+      await roomsApi.create({
+        name: trimmedName,
+        accessLevel: newRoomAccessLevel,
+        ...(newRoomAccessLevel === 'closed' ? { password: newRoomPassword } : {}),
+        ...(newRoomAccessLevel === 'private' || newRoomAccessLevel === 'restricted'
+          ? { memberIds: newRoomMemberIds }
+          : {}),
+      });
       setNewRoomNameInput('');
+      setNewRoomAccessLevel('public');
+      setNewRoomPassword('');
+      setNewRoomMemberIds([]);
       setShowCreateRoomModal(false);
       showToast('Комната создана', 'success');
     } catch (err) {
       showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка', 'error');
     }
+  }
+
+  async function openRoomAccess(room: Room) {
+    setAccessRoomId(room.id);
+    setAccessRoomLevel((room.access_level as RoomAccessLevel) || 'public');
+    setAccessRoomPassword('');
+    setAccessRoomMemberIds([]);
+    setAccessMembersLoading(true);
+    try {
+      const { members } = await roomsApi.members(room.id);
+      setAccessRoomMemberIds(members.map((member) => member.id));
+    } catch (err) {
+      showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка', 'error');
+    } finally {
+      setAccessMembersLoading(false);
+    }
+  }
+
+  function closeRoomAccess() {
+    setAccessRoomId(null);
+    setAccessRoomLevel('public');
+    setAccessRoomPassword('');
+    setAccessRoomMemberIds([]);
+    setAccessMembersLoading(false);
+  }
+
+  async function saveRoomAccess() {
+    if (accessRoomId === null) return;
+    if (
+      accessRoomLevel === 'closed' &&
+      !accessRoomPassword &&
+      !accessRoom?.has_password
+    ) {
+      showToast('Для комнаты с паролем задайте пароль', 'error');
+      return;
+    }
+
+    setAccessSaving(true);
+    try {
+      const payload: RoomUpdateInput = {
+        accessLevel: accessRoomLevel,
+        memberIds: accessRoomMemberIds,
+      };
+      if (accessRoomLevel === 'closed' && accessRoomPassword) {
+        payload.password = accessRoomPassword;
+      }
+      await roomsApi.update(accessRoomId, payload);
+      closeRoomAccess();
+      showToast('Доступ к комнате обновлён', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка', 'error');
+    } finally {
+      setAccessSaving(false);
+    }
+  }
+
+  function toggleMemberSelection(memberIds: number[], userId: number, next: boolean) {
+    if (next) return memberIds.includes(userId) ? memberIds : [...memberIds, userId];
+    return memberIds.filter((id) => id !== userId);
   }
 
   async function saveServerName(e: React.FormEvent) {
@@ -1208,7 +1309,34 @@ export default function Admin() {
               <div className="admin-list-col">
                 {rooms.map((r) => (
                   <div key={r.id} className="admin-row-card">
-                    <span className="admin-room-title">{r.name}</span>
+                    <div className="admin-room-info">
+                      <span className="admin-room-title">{r.name}</span>
+                      <span
+                        className={`admin-room-badge admin-room-badge--${r.access_level || 'public'}`}
+                        title={
+                          r.access_level === 'closed'
+                            ? 'Вход по паролю'
+                            : r.access_level === 'private'
+                              ? 'Скрытая комната, доступ по списку'
+                              : r.access_level === 'restricted'
+                                ? 'Видимая комната, доступ по списку'
+                                : 'Доступна всем'
+                        }
+                      >
+                        {r.access_level && r.access_level !== 'public' && (
+                          <span className="icon-inline" aria-hidden>
+                            <IconLock />
+                          </span>
+                        )}
+                        {r.access_level === 'closed'
+                          ? 'По паролю'
+                          : r.access_level === 'private'
+                            ? 'Приватная'
+                            : r.access_level === 'restricted'
+                              ? 'По приглашению'
+                              : 'Публичная'}
+                      </span>
+                    </div>
                     <div className="admin-room-actions">
                       {r.name === 'main' ? (
                         <button
@@ -1223,6 +1351,16 @@ export default function Admin() {
                         </button>
                       ) : (
                         <>
+                          <button
+                            type="button"
+                            onClick={() => openRoomAccess(r)}
+                            className="admin-btn-room admin-btn-room--accent"
+                            title="Настроить доступ"
+                          >
+                            <span className="icon-inline" aria-hidden>
+                              <IconLock />
+                            </span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => { setRenamingRoomId(r.id); setRenamingInputValue(r.name); }}
@@ -1578,12 +1716,166 @@ export default function Admin() {
                 }}
               />
             </div>
+
+            <div className="admin-modal-field">
+              <label className="form-label">Доступ:</label>
+              <select
+                value={newRoomAccessLevel}
+                onChange={(e) => setNewRoomAccessLevel(e.target.value as RoomAccessLevel)}
+              >
+                <option value="public">Публичная — доступна всем</option>
+                <option value="closed">По паролю — видна всем, вход по паролю</option>
+                <option value="restricted">По приглашению — видна, доступ по списку</option>
+                <option value="private">Приватная — скрыта, доступ по списку</option>
+              </select>
+              <p className="admin-field-hint">{accessLevelHint[newRoomAccessLevel]}</p>
+            </div>
+
+            {newRoomAccessLevel === 'closed' && (
+              <div className="admin-modal-field">
+                <label className="form-label">Пароль комнаты:</label>
+                <input
+                  type="password"
+                  value={newRoomPassword}
+                  onChange={(e) => setNewRoomPassword(e.target.value)}
+                  placeholder="Минимум 4 символа"
+                  autoComplete="new-password"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') createRoom();
+                  }}
+                />
+              </div>
+            )}
+
+            {(newRoomAccessLevel === 'private' || newRoomAccessLevel === 'restricted') && (
+              <div className="admin-modal-field">
+                <label className="form-label">Кому разрешён доступ:</label>
+                {assignableUsers.length === 0 ? (
+                  <p className="admin-empty-hint">Нет пользователей для выбора</p>
+                ) : (
+                  <div className="admin-member-list">
+                    {assignableUsers.map((u) => (
+                      <label key={u.id} className="admin-member-option">
+                        <input
+                          type="checkbox"
+                          checked={newRoomMemberIds.includes(u.id)}
+                          onChange={(e) =>
+                            setNewRoomMemberIds((prev) =>
+                              toggleMemberSelection(prev, u.id, e.target.checked)
+                            )
+                          }
+                        />
+                        <span>{u.login}</span>
+                        {!u.verified && <span className="admin-member-hint">не подтверждён</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="admin-field-hint">
+                  Владелец и модераторы всегда имеют доступ. Список можно изменить позже.
+                </p>
+              </div>
+            )}
+
             <div className="admin-modal-actions">
               <button type="button" className="secondary" onClick={() => setShowCreateRoomModal(false)}>
                 Отмена
               </button>
               <button type="button" onClick={() => createRoom()}>
                 Создать комнату
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Room Access Modal */}
+      {accessRoomId !== null && accessRoom && (
+        <div className="admin-modal-overlay" onClick={closeRoomAccess}>
+          <div className="admin-modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3 className="admin-modal-title">Доступ к комнате «{accessRoom.name}»</h3>
+
+            <div className="admin-modal-field">
+              <label className="form-label">Уровень доступа:</label>
+              <select
+                value={accessRoomLevel}
+                onChange={(e) => setAccessRoomLevel(e.target.value as RoomAccessLevel)}
+              >
+                <option value="public">Публичная — доступна всем</option>
+                <option value="closed">По паролю — видна всем, вход по паролю</option>
+                <option value="restricted">По приглашению — видна, доступ по списку</option>
+                <option value="private">Приватная — скрыта, доступ по списку</option>
+              </select>
+              <p className="admin-field-hint">{accessLevelHint[accessRoomLevel]}</p>
+              {accessRoomLevel !== (accessRoom.access_level || 'public') && (
+                <p className="admin-field-hint admin-field-hint--warn">
+                  При смене уровня текущие разблокировки комнаты будут сброшены.
+                </p>
+              )}
+            </div>
+
+            {accessRoomLevel === 'closed' && (
+              <div className="admin-modal-field">
+                <label className="form-label">
+                  {accessRoom.has_password ? 'Новый пароль (необязательно):' : 'Пароль комнаты:'}
+                </label>
+                <input
+                  type="password"
+                  value={accessRoomPassword}
+                  onChange={(e) => setAccessRoomPassword(e.target.value)}
+                  placeholder={
+                    accessRoom.has_password
+                      ? 'Оставьте пустым, чтобы не менять'
+                      : 'Минимум 4 символа'
+                  }
+                  autoComplete="new-password"
+                />
+                {accessRoom.has_password && (
+                  <p className="admin-field-hint">
+                    Если задать новый пароль, всем пользователям придётся ввести его заново.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {(accessRoomLevel === 'private' || accessRoomLevel === 'restricted') && (
+              <div className="admin-modal-field">
+                <label className="form-label">Кому разрешён доступ:</label>
+                {accessMembersLoading ? (
+                  <p className="admin-empty-hint">Загрузка…</p>
+                ) : assignableUsers.length === 0 ? (
+                  <p className="admin-empty-hint">Нет пользователей для выбора</p>
+                ) : (
+                  <div className="admin-member-list">
+                    {assignableUsers.map((u) => (
+                      <label key={u.id} className="admin-member-option">
+                        <input
+                          type="checkbox"
+                          checked={accessRoomMemberIds.includes(u.id)}
+                          onChange={(e) =>
+                            setAccessRoomMemberIds((prev) =>
+                              toggleMemberSelection(prev, u.id, e.target.checked)
+                            )
+                          }
+                        />
+                        <span>{u.login}</span>
+                        {!u.verified && <span className="admin-member-hint">не подтверждён</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="admin-field-hint">
+                  Владелец и модераторы всегда имеют доступ.
+                </p>
+              </div>
+            )}
+
+            <div className="admin-modal-actions">
+              <button type="button" className="secondary" onClick={closeRoomAccess}>
+                Отмена
+              </button>
+              <button type="button" onClick={saveRoomAccess} disabled={accessSaving || accessMembersLoading}>
+                {accessSaving ? 'Сохранение…' : 'Сохранить'}
               </button>
             </div>
           </div>

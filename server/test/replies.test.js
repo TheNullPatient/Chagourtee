@@ -52,6 +52,7 @@ test('message replies are persisted, quoted and survive deletion', async () => {
     request.user = user;
   });
   app.decorate('broadcastRoom', (_roomId, payload) => roomBroadcasts.push(payload));
+  app.decorate('broadcastRoomNotification', (_roomId, payload) => allBroadcasts.push(payload));
   app.decorate('broadcastAll', (payload) => allBroadcasts.push(payload));
 
   messagesPlugin(app);

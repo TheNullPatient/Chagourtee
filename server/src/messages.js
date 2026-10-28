@@ -1,5 +1,11 @@
 const { isOwnerOrModerator } = require('./auth');
 const { collectMediaForMessages, removeMediaFiles } = require('./dataCleanup');
+const {
+  getRoom,
+  canViewRoom,
+  canAccessRoom,
+  normalizeAccessLevel,
+} = require('./roomAccess');
 
 // Rate limiting store - keeps track of user message counts
 const rateLimitStore = new Map(); // userId -> { count: number, timestamp: number }
@@ -30,8 +36,7 @@ const REPLY_FIELDS = [
  * Live parent messages win, so an edited original is quoted in its current
  * form; snapshots keep the quote readable after the original is deleted.
  */
-function attachReplyInfo(db, messages) {
-  if (messages.length === 0) return messages;
+function attachReplyInfo(db, messages) {  if (messages.length === 0) return messages;
 
   const replyIds = [
     ...new Set(
@@ -91,6 +96,25 @@ function attachReplyInfo(db, messages) {
   return messages;
 }
 
+/**
+ * Returns a Fastify reply when the user may not read/write the room, or null.
+ * Private rooms answer 404 so outsiders cannot confirm that they exist.
+ */
+function denyRoomAccess(fastify, db, request, reply, room) {
+  const user = fastify.getUser(request.session.userId);
+  if (canAccessRoom(db, room, user)) return null;
+
+  if (!canViewRoom(db, room, user)) {
+    return reply.code(404).send({ error: 'Room not found' });
+  }
+
+  const level = normalizeAccessLevel(room.access_level);
+  return reply.code(403).send({
+    error: level === 'closed' ? 'Room is locked' : 'Room access denied',
+    code: level === 'closed' ? 'ROOM_LOCKED' : 'ROOM_FORBIDDEN',
+  });
+}
+
 module.exports = function (fastify) {
   const db = fastify.db;
 
@@ -101,8 +125,10 @@ module.exports = function (fastify) {
     const limit = Math.min(Number(request.query.limit) || 50, 100);
     const before = request.query.before;
 
-    const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
+    const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
+    const accessDenied = denyRoomAccess(fastify, db, request, reply, room);
+    if (accessDenied) return accessDenied;
 
     const userId = request.session.userId;
 
@@ -227,8 +253,10 @@ module.exports = function (fastify) {
     // Update rate limit store
     rateLimitStore.set(userId, userRateLimit);
 
-    const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
+    const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
+    const accessDenied = denyRoomAccess(fastify, db, request, reply, room);
+    if (accessDenied) return accessDenied;
 
     let replyTarget = null;
     if (replyToMessageId !== undefined && replyToMessageId !== null) {
@@ -338,12 +366,14 @@ module.exports = function (fastify) {
         fastify.log.info(`broadcastRoom function not available on fastify instance`);
       }
     }
-    // Additionally broadcast lightweight notification about new message to all clients
-    if (fastify.broadcastAll) {
+    // Additionally broadcast lightweight notification about new message to all
+    // users who can access this room. Private/closed rooms must not leak
+    // metadata to outsiders.
+    if (fastify.broadcastRoomNotification) {
       const previewBody = String(fullMessage.body || '');
       const preview =
         previewBody.length > 120 ? `${previewBody.slice(0, 117)}...` : previewBody;
-      fastify.broadcastAll({
+      fastify.broadcastRoomNotification(roomId, {
         type: 'room_message',
         roomId,
         messageId: fullMessage.id,
@@ -368,8 +398,10 @@ module.exports = function (fastify) {
       return reply.code(400).send({ error: 'lastReadMessageId is required' });
     }
 
-    const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
+    const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
+    const accessDenied = denyRoomAccess(fastify, db, request, reply, room);
+    if (accessDenied) return accessDenied;
 
     const userId = request.session.userId;
     const maxIdRow = db
@@ -416,8 +448,10 @@ module.exports = function (fastify) {
     }
 
     // Check if room exists
-    const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
+    const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
+    const accessDenied = denyRoomAccess(fastify, db, request, reply, room);
+    if (accessDenied) return accessDenied;
 
     // Get the message
     const message = db.prepare(`
@@ -554,8 +588,10 @@ module.exports = function (fastify) {
     const messageId = Number(request.params.messageId);
 
     // Check if room exists
-    const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
+    const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
+    const accessDenied = denyRoomAccess(fastify, db, request, reply, room);
+    if (accessDenied) return accessDenied;
 
     // Get the message
     const message = db.prepare(`
@@ -644,8 +680,10 @@ module.exports = function (fastify) {
     }
 
     // Check if room exists
-    const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
+    const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
+    const accessDenied = denyRoomAccess(fastify, db, request, reply, room);
+    if (accessDenied) return accessDenied;
 
     const uniqueMessageIds = [...new Set(messageIds.map(Number).filter(Number.isInteger))];
     if (uniqueMessageIds.length === 0) {

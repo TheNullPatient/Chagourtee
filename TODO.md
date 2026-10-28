@@ -115,13 +115,13 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 - [ ] Create UI for owners to modify individual moderator permissions
 
 #### 4.2. Room Access Levels
-- [ ] Define four room access levels: Public, Closed (password), Private (hidden), Restricted (whitelist)
-- [ ] Add database fields to store room access level and related settings
-- [ ] Implement server-side access control for each room type in [rooms.js](./server/src/rooms.js)
-- [ ] Create UI controls for room creators/administrators to set access levels
-- [ ] Add password protection for closed rooms
-- [ ] Implement whitelist management for restricted rooms
-- [ ] Hide private/restricted rooms from room listings appropriately
+- [x] Define four room access levels: Public, Closed (password), Private (hidden), Restricted (whitelist)
+- [x] Add database fields to store room access level and related settings
+- [x] Implement server-side access control for each room type in [rooms.js](./server/src/rooms.js)
+- [x] Create UI controls for room creators/administrators to set access levels
+- [x] Add password protection for closed rooms
+- [x] Implement whitelist management for restricted rooms
+- [x] Hide private/restricted rooms from room listings appropriately
 
 ### 5. Enhanced User Interactions
 
@@ -190,7 +190,7 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 2. Code Quality Improvements (replace alerts and centralize styles) — ✅ **Done** (alerts и confirm заменены на Toast/ConfirmModal, CSS разбит на модули)
 3. Basic HTTPS/WSS implementation
 4. Message Replies functionality — ✅ **Done**
-5. Room access levels (at least basic implementation)
+5. Room access levels (at least basic implementation) — ✅ **Done** (Public / Closed / Private / Restricted)
 
 ### Medium Priority (Would be nice for v0.4.0-alpha)
 1. Extended Permission Management

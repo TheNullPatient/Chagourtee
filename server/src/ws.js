@@ -2,6 +2,12 @@ const WebSocket = require('ws');
 const { getDb } = require('./db');
 const fs = require('fs');
 const path = require('path');
+const {
+  getRoom,
+  canViewRoom,
+  canAccessRoom,
+  normalizeAccessLevel,
+} = require('./roomAccess');
 
 const SESSION_COOKIE = 'chagourtee_sid';
 const { MEDIA_DIR } = require('./dataCleanup');
@@ -157,9 +163,21 @@ module.exports = function (fastify) {
             return;
           }
           const roomId = Number(msg.roomId);
-          const room = fastify.db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
+          const room = getRoom(fastify.db, roomId);
           if (!room) {
             ws.send(JSON.stringify({ type: 'error', code: 'ROOM_NOT_FOUND', message: 'Room not found' }));
+            return;
+          }
+          const joinUser = fastify.getUser(userId);
+          if (!canAccessRoom(fastify.db, room, joinUser)) {
+            const level = normalizeAccessLevel(room.access_level);
+            ws.send(JSON.stringify({
+              type: 'error',
+              code: level === 'closed' ? 'ROOM_LOCKED' : 'ROOM_FORBIDDEN',
+              message: level === 'closed'
+                ? 'Room requires a password'
+                : 'Room access denied',
+            }));
             return;
           }
           ws.currentRoomId = roomId;
@@ -299,8 +317,43 @@ module.exports = function (fastify) {
     });
   }
   
-  // Broadcast message updates to all users in the room
+  function sendToClient(c, data) {
+    try {
+      c.send(data);
+      return true;
+    } catch (err) {
+      if (err.code !== 'ECONNRESET' && err.code !== 'EPIPE') {
+        fastify.log.error('Broadcast send error:', err);
+      }
+      return false;
+    }
+  }
+
+  function canClientAccessRoom(c, room) {
+    const clientUserId = userByClient.get(c);
+    if (!clientUserId) return false;
+    return canAccessRoom(fastify.db, room, fastify.getUser(clientUserId));
+  }
+
+  function canClientViewRoom(c, room) {
+    const clientUserId = userByClient.get(c);
+    if (!clientUserId) return false;
+    return canViewRoom(fastify.db, room, fastify.getUser(clientUserId));
+  }
+
+  /** Sends an event only to users who can currently access the room. */
+  function broadcastToRoomAudience(room, payload) {
+    const data = JSON.stringify(payload);
+    wss.clients.forEach((c) => {
+      if (c.readyState === WebSocket.OPEN && c.isVerified && canClientAccessRoom(c, room)) {
+        sendToClient(c, data);
+      }
+    });
+  }
+
   function broadcastMessageUpdated(roomId, messageId, content, userId, login) {
+    const room = getRoom(fastify.db, roomId);
+    if (!room) return;
     const payload = JSON.stringify({
       type: 'message_updated',
       messageId,
@@ -310,20 +363,21 @@ module.exports = function (fastify) {
     });
 
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
-        try {
-          c.send(payload);
-        } catch (err) {
-          if (err.code !== 'ECONNRESET' && err.code !== 'EPIPE') {
-            fastify.log.error('broadcastMessageUpdated send error:', err);
-          }
-        }
+      if (
+        c.readyState === WebSocket.OPEN &&
+        c.isVerified &&
+        c.currentRoomId === roomId &&
+        canClientAccessRoom(c, room)
+      ) {
+        sendToClient(c, payload);
       }
     });
   }
   
   // Broadcast message deletions to all users in the room
   function broadcastMessageDeleted(roomId, messageId, userId, login) {
+    const room = getRoom(fastify.db, roomId);
+    if (!room) return;
     const payload = JSON.stringify({
       type: 'message_deleted',
       messageId,
@@ -332,42 +386,44 @@ module.exports = function (fastify) {
     });
 
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
-        try {
-          c.send(payload);
-        } catch (err) {
-          if (err.code !== 'ECONNRESET' && err.code !== 'EPIPE') {
-            fastify.log.error('broadcastMessageDeleted send error:', err);
-          }
-        }
+      if (
+        c.readyState === WebSocket.OPEN &&
+        c.isVerified &&
+        c.currentRoomId === roomId &&
+        canClientAccessRoom(c, room)
+      ) {
+        sendToClient(c, payload);
       }
     });
   }
   
   function broadcastToRoom(roomId, payload, senderWs = null) {
     const data = JSON.stringify(payload);
+    const room = getRoom(fastify.db, roomId);
+    if (!room) return;
     if (process.env.DEBUG_MODE === 'true') {
       fastify.log.info(`Broadcasting to room ${roomId}:`, payload.type);
     }
     let count = 0;
     wss.clients.forEach((c) => {
-      if (c.readyState === WebSocket.OPEN && c.isVerified && c.currentRoomId === roomId) {
+      if (
+        c.readyState === WebSocket.OPEN &&
+        c.isVerified &&
+        c.currentRoomId === roomId
+      ) {
         // Don't send the message back to the sender
         if (c === senderWs) {
           return; // Skip the sender
         }
+        if (!canClientAccessRoom(c, room)) {
+          // Access may have been revoked while the socket stayed in the room.
+          c.currentRoomId = null;
+          return;
+        }
         if (process.env.DEBUG_MODE === 'true') {
           fastify.log.info(`Sending to client in room ${roomId}`);
         }
-        try {
-          c.send(data);
-          count++;
-        } catch (err) {
-          // Connection might be dead - will be cleaned up by error handler
-          if (err.code !== 'ECONNRESET' && err.code !== 'EPIPE') {
-            fastify.log.error('broadcastToRoom send error:', err);
-          }
-        }
+        if (sendToClient(c, data)) count++;
       }
     });
     if (process.env.DEBUG_MODE === 'true') {
@@ -376,11 +432,23 @@ module.exports = function (fastify) {
   }
 
   function broadcastRoomCreated(room) {
-    broadcast({ type: 'room_created', room });
+    // Private and restricted rooms must not be announced to outsiders.
+    broadcastToRoomAudience(room, { type: 'room_created', room });
   }
 
   function broadcastRoomUpdated(room) {
-    broadcast({ type: 'room_updated', room });
+    const data = JSON.stringify({ type: 'room_updated', room });
+    wss.clients.forEach((c) => {
+      if (c.readyState === WebSocket.OPEN && c.isVerified && canClientViewRoom(c, room)) {
+        sendToClient(c, data);
+      }
+    });
+  }
+
+  function broadcastRoomsChanged() {
+    // A tiny signal without room metadata: clients refetch /api/rooms, which
+    // applies per-user visibility and lock state.
+    broadcast({ type: 'rooms_changed' });
   }
   
   function broadcastRoomDeletion(roomId) {
@@ -490,6 +558,12 @@ module.exports = function (fastify) {
 
   fastify.broadcastRoomCreated = broadcastRoomCreated;
   fastify.broadcastRoomUpdated = broadcastRoomUpdated;
+  fastify.broadcastRoomsChanged = broadcastRoomsChanged;
+  fastify.broadcastRoomNotification = function (roomId, payload) {
+    const room = getRoom(fastify.db, roomId);
+    if (!room) return;
+    broadcastToRoomAudience(room, payload);
+  };
   fastify.broadcastRoomMessagesCleared = broadcastRoomMessagesCleared;
   fastify.broadcastUserRoleChanged = broadcastUserRoleChanged;
   fastify.broadcastUserUpdated = broadcastUserUpdated;

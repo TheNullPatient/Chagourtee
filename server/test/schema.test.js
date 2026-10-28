@@ -78,6 +78,7 @@ function inspect(dbPath) {
       tables,
       indexes,
       messageColumns: columns('messages'),
+      roomColumns: columns('rooms'),
       userColumns: columns('users'),
       verificationColumns: columns('verification_settings'),
       mediaColumns: tables.includes('media_files') ? columns('media_files') : [],
@@ -125,12 +126,18 @@ test('update-schema migrates an outdated database in place', () => {
       'message_reads',
       'media_files',
       'media_storage_settings',
+      'room_members',
+      'room_unlocks',
     ]) {
       check(`creates the ${table} table`, state.tables.includes(table));
     }
 
     check('adds messages.updated_at', state.messageColumns.includes('updated_at'));
     check('adds messages.media_position', state.messageColumns.includes('media_position'));
+    check(
+      'adds room access columns',
+      state.roomColumns.includes('access_level') && state.roomColumns.includes('password_hash')
+    );
     check(
       'adds users.registration_comment',
       state.userColumns.includes('registration_comment')
@@ -156,6 +163,11 @@ test('update-schema migrates an outdated database in place', () => {
     );
     check('creates the updated_at index', state.indexes.includes('idx_messages_updated_at'));
     check('creates the message_reads index', state.indexes.includes('idx_message_reads_user_id'));
+    check(
+      'creates the room access indexes',
+      state.indexes.includes('idx_room_members_user_id') &&
+        state.indexes.includes('idx_room_unlocks_user_id')
+    );
     check(
       'creates the verification code lookup index',
       state.indexes.includes('idx_verification_codes_hash')

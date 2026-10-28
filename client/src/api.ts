@@ -115,12 +115,42 @@ export type User = {
   verified: boolean;
 };
 
+export type RoomAccessLevel = 'public' | 'closed' | 'private' | 'restricted';
+
 export type Room = {
   id: number;
   name: string;
   created_at: string;
+  access_level?: RoomAccessLevel;
+  has_password?: boolean;
+  locked?: boolean;
+  password_required?: boolean;
+  member_only?: boolean;
   message_count?: number;
   unread_count?: number;
+  member_count?: number;
+};
+
+export type RoomMember = {
+  id: number;
+  login: string;
+  role: 'owner' | 'moderator' | 'member';
+  verified: number;
+  created_at: string;
+};
+
+export type RoomUpdateInput = {
+  name?: string;
+  accessLevel?: RoomAccessLevel;
+  password?: string | null;
+  memberIds?: number[];
+};
+
+export type RoomCreateInput = {
+  name: string;
+  accessLevel?: RoomAccessLevel;
+  password?: string;
+  memberIds?: number[];
 };
 
 export type MediaFile = {
@@ -289,20 +319,36 @@ export const auth = {
 
 export const rooms = {
   list: () => api<{ rooms: Room[] }>('/api/rooms'),
-  create: (name: string) =>
+  create: (input: string | RoomCreateInput) =>
     api<Room>('/api/rooms', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(
+        typeof input === 'string' ? { name: input } : input
+      ),
     }),
-  update: (id: number, name: string) =>
+  update: (id: number, input: string | RoomUpdateInput) =>
     api<Room>(`/api/rooms/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(
+        typeof input === 'string' ? { name: input } : input
+      ),
     }),
   delete: (id: number) =>
     api<{ ok: boolean }>(`/api/rooms/${id}`, { method: 'DELETE' }),
   clearMessages: (id: number) =>
     api<{ ok: boolean, message: string }>(`/api/rooms/${id}/messages`, { method: 'DELETE' }),
+  members: (id: number) =>
+    api<{ members: RoomMember[] }>(`/api/rooms/${id}/members`),
+  setMembers: (id: number, memberIds: number[]) =>
+    api<{ ok: boolean; members: RoomMember[] }>(`/api/rooms/${id}/members`, {
+      method: 'PUT',
+      body: JSON.stringify({ memberIds }),
+    }),
+  unlock: (id: number, password: string) =>
+    api<{ ok: boolean; unlocked: boolean }>(`/api/rooms/${id}/unlock`, {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
 };
 
 export const messages = {

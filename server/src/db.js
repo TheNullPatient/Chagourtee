@@ -51,7 +51,24 @@ function createDb(dbPath) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       created_by INTEGER NOT NULL REFERENCES users(id),
+      access_level TEXT NOT NULL DEFAULT 'public',
+      password_hash TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS room_members (
+      room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (room_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS room_unlocks (
+      room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (room_id, user_id)
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -244,6 +261,26 @@ function createDb(dbPath) {
     db.exec('CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON messages(reply_to_message_id)');
   } catch (e) {
     console.error('Failed to ensure messages schema is up to date:', e);
+  }
+
+  // Ensure new rooms columns and access tables exist on older databases
+  try {
+    const roomColumns = db
+      .prepare('PRAGMA table_info(rooms)')
+      .all()
+      .map((c) => c.name);
+
+    if (!roomColumns.includes('access_level')) {
+      db.exec("ALTER TABLE rooms ADD COLUMN access_level TEXT NOT NULL DEFAULT 'public'");
+    }
+    if (!roomColumns.includes('password_hash')) {
+      db.exec('ALTER TABLE rooms ADD COLUMN password_hash TEXT');
+    }
+
+    db.exec('CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON room_members(user_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_room_unlocks_user_id ON room_unlocks(user_id)');
+  } catch (e) {
+    console.error('Failed to ensure rooms schema is up to date:', e);
   }
 
   // Ensure new users columns exist on older databases

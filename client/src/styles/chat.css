@@ -111,6 +111,21 @@ button.chat-room-link:hover {
   gap: 0.3rem;
 }
 
+.chat-room-lock {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.chat-room-lock .icon-inline {
+  display: inline-flex;
+}
+
+.chat-room-lock svg {
+  width: 14px;
+  height: 14px;
+}
+
 .chat-room-unread-badge {
   min-width: 1.5rem;
   padding: 0.1rem 0.4rem;
@@ -1243,6 +1258,69 @@ button.chat-room-link:hover {
   padding: 2rem;
   text-align: center;
   color: var(--text-muted);
+}
+
+.chat-locked-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.chat-locked-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.chat-locked-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.chat-locked-title {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.chat-locked-text {
+  max-width: 28rem;
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.chat-unlock-form {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 22rem;
+  margin-top: 0.25rem;
+}
+
+.chat-unlock-form input {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-unlock-form button {
+  flex-shrink: 0;
+}
+
+.chat-locked-back {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-default);
+  text-decoration: none;
 }
 
 .new-messages-divider {
