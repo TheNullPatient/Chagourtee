@@ -78,6 +78,8 @@ function inspect(dbPath) {
       tables,
       indexes,
       messageColumns: columns('messages'),
+      userColumns: columns('users'),
+      verificationColumns: columns('verification_settings'),
       mediaColumns: tables.includes('media_files') ? columns('media_files') : [],
       storageColumns: tables.includes('media_storage_settings')
         ? columns('media_storage_settings')
@@ -130,6 +132,14 @@ test('update-schema migrates an outdated database in place', () => {
     check('adds messages.updated_at', state.messageColumns.includes('updated_at'));
     check('adds messages.media_position', state.messageColumns.includes('media_position'));
     check(
+      'adds users.registration_comment',
+      state.userColumns.includes('registration_comment')
+    );
+    check(
+      'adds verification_settings.delete_comment_on_approve',
+      state.verificationColumns.includes('delete_comment_on_approve')
+    );
+    check(
       'adds the media transcode columns',
       ['transcoded_filename', 'transcoded_mime_type', 'transcoded_created_at'].every((column) =>
         state.mediaColumns.includes(column)
@@ -146,6 +156,10 @@ test('update-schema migrates an outdated database in place', () => {
     );
     check('creates the updated_at index', state.indexes.includes('idx_messages_updated_at'));
     check('creates the message_reads index', state.indexes.includes('idx_message_reads_user_id'));
+    check(
+      'creates the verification code lookup index',
+      state.indexes.includes('idx_verification_codes_hash')
+    );
     check(
       'creates the media indexes',
       state.indexes.includes('idx_media_files_message_id') &&

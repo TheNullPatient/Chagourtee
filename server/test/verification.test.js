@@ -204,6 +204,15 @@ test('verification codes are hashed, single-use and rate limited', async () => {
       created.body
     );
 
+    const duplicate = await request('POST', '/api/verification/codes', owner, {
+      code: 'ABC123',
+    });
+    check(
+      'duplicate custom codes are rejected',
+      duplicate.statusCode === 400 && /already exists/i.test(duplicate.json().error || ''),
+      duplicate.body
+    );
+
     const codeId = created.json().id;
     const stored = db
       .prepare('SELECT code_hash FROM verification_codes WHERE id = ?')

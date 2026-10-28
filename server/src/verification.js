@@ -1,10 +1,31 @@
-const { verifyPassword, hashPassword } = require('./auth');
 const { deleteUserData } = require('./dataCleanup');
 const crypto = require('crypto');
 
 const CODE_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
 const MAX_CODE_ATTEMPTS = 5;
+const CODE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const codeAttempts = new Map();
+
+function getCodeSecret() {
+  return process.env.CHAGOURTEE_SESSION_SECRET || 'chagourtee-verification-code-secret';
+}
+
+// A deterministic lookup hash keeps code use O(1). Storing bcrypt hashes forced
+// a full scan with one synchronous bcrypt comparison per stored code.
+function hashCode(code) {
+  return crypto.createHmac('sha256', getCodeSecret()).update(code).digest('hex');
+}
+
+let lastCodeCleanupAt = 0;
+
+function cleanupExpiredCodes(db, { force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - lastCodeCleanupAt < CODE_CLEANUP_INTERVAL_MS) return;
+  lastCodeCleanupAt = now;
+  db.prepare(
+    "DELETE FROM verification_codes WHERE used = 0 AND julianday(expires_at) < julianday('now')"
+  ).run();
+}
 
 const codeAttemptCleanup = setInterval(() => {
   const now = Date.now();
@@ -36,6 +57,17 @@ function registerFailedCodeAttempt(userId) {
 
 module.exports = function (fastify) {
   const db = fastify.db;
+
+  const codeCleanupTimer = setInterval(() => {
+    try {
+      cleanupExpiredCodes(db, { force: true });
+    } catch (error) {
+      fastify.log.error('Failed to clean up expired verification codes:', error);
+    }
+  }, CODE_CLEANUP_INTERVAL_MS);
+  if (typeof codeCleanupTimer.unref === 'function') {
+    codeCleanupTimer.unref();
+  }
 
   // Public endpoint: the registration page needs to know whether a comment
   // field should be shown before the user has a session.
@@ -254,13 +286,23 @@ module.exports = function (fastify) {
       rawCode = crypto.randomBytes(8).toString('hex'); // генерируем случайный код
     }
 
-    const codeHash = hashPassword(rawCode);
+    cleanupExpiredCodes(db);
+
+    const codeHash = hashCode(rawCode);
     const expiresAtValue = expiresAt || new Date(now.getTime() + 24*60*60*1000).toISOString();
 
-    const result = db.prepare(`
-      INSERT INTO verification_codes (code_hash, created_by, expires_at)
-      VALUES (?, ?, ?)
-    `).run(codeHash, request.session.userId, expiresAtValue);
+    let result;
+    try {
+      result = db.prepare(`
+        INSERT INTO verification_codes (code_hash, created_by, expires_at)
+        VALUES (?, ?, ?)
+      `).run(codeHash, request.session.userId, expiresAtValue);
+    } catch (error) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint/i.test(error.message)) {
+        return reply.code(400).send({ error: 'Code already exists' });
+      }
+      throw error;
+    }
     
     const response = {
       id: result.lastInsertRowid,
@@ -317,9 +359,10 @@ module.exports = function (fastify) {
     }
 
     const { code } = request.body || {};
-    if (typeof code !== 'string' || code.length === 0 || code.length > 128) {
+    if (typeof code !== 'string' || code.trim().length === 0 || code.trim().length > 128) {
       return reply.code(400).send({ error: 'Code must be between 1 and 128 characters' });
     }
+    const codeValue = code.trim();
 
     const attempt = getCodeAttemptRecord(userId);
     if (attempt.count >= MAX_CODE_ATTEMPTS) {
@@ -336,28 +379,13 @@ module.exports = function (fastify) {
       return reply.code(400).send({ ok: false, message });
     };
 
-    const codeRows = db.prepare(`
-      SELECT id, code_hash, expires_at
-      FROM verification_codes
-      WHERE used = 0
-      ORDER BY created_at DESC
-    `).all();
+    cleanupExpiredCodes(db);
 
-    // Bcrypt hashes are salted, so every candidate has to be compared.
-    // Attempts are rate limited above to keep this loop bounded.
-    let matchedCode = null;
-    for (const record of codeRows) {
-      let matches = false;
-      try {
-        matches = verifyPassword(code, record.code_hash);
-      } catch {
-        matches = false;
-      }
-      if (matches) {
-        matchedCode = record;
-        break;
-      }
-    }
+    const matchedCode = db
+      .prepare(
+        'SELECT id, expires_at FROM verification_codes WHERE code_hash = ? AND used = 0'
+      )
+      .get(hashCode(codeValue));
 
     if (!matchedCode) {
       return rejectAttempt('Invalid or expired code');
