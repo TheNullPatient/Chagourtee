@@ -137,9 +137,6 @@ function createDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_message_reads_user_id ON message_reads(user_id);
     CREATE INDEX IF NOT EXISTS idx_media_files_message_id ON media_files(message_id);
     CREATE INDEX IF NOT EXISTS idx_media_files_uploaded_by ON media_files(uploaded_by);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_verification_codes_hash ON verification_codes(code_hash);
-    CREATE INDEX IF NOT EXISTS idx_verification_codes_used ON verification_codes(used);
-    CREATE INDEX IF NOT EXISTS idx_verification_codes_expires ON verification_codes(expires_at);
   `);
 
   // Ensure new media_files columns exist on older databases
@@ -270,6 +267,17 @@ function createDb(dbPath) {
   } catch (e) {
     console.error('Failed to clean up legacy verification codes:', e);
   }
+
+  try {
+    db.exec(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_verification_codes_hash ON verification_codes(code_hash)'
+    );
+  } catch (e) {
+    console.error('Failed to create the verification code lookup index:', e);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_verification_codes_hash ON verification_codes(code_hash)');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_verification_codes_used ON verification_codes(used)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_verification_codes_expires ON verification_codes(expires_at)');
 
   // Foreign keys were not enforced before this version, so old databases may
   // contain orphan rows. Report them instead of deleting data automatically.
