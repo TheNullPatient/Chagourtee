@@ -113,6 +113,46 @@ test('verification codes are hashed, single-use and rate limited', async () => {
     const statusAfterEnable = await request('GET', '/api/verification/status');
     check('public status reflects enabled verification', statusAfterEnable.json().enabled === true);
 
+    const settingsAfterEnable = await request('GET', '/api/verification/settings', owner);
+    check(
+      'comment auto-deletion is disabled by default',
+      settingsAfterEnable.statusCode === 200 &&
+        settingsAfterEnable.json().deleteCommentOnApprove === false,
+      settingsAfterEnable.body
+    );
+
+    const commentSetting = await request('POST', '/api/verification/settings', owner, {
+      deleteCommentOnApprove: true,
+    });
+    check(
+      'owner can enable comment auto-deletion without changing verification',
+      commentSetting.statusCode === 200 &&
+        commentSetting.json().enabled === true &&
+        commentSetting.json().deleteCommentOnApprove === true,
+      commentSetting.body
+    );
+
+    const invalidSetting = await request('POST', '/api/verification/settings', owner, {
+      deleteCommentOnApprove: 'yes',
+    });
+    check(
+      'non-boolean comment setting is rejected',
+      invalidSetting.statusCode === 400,
+      invalidSetting.body
+    );
+
+    db.prepare('UPDATE users SET registration_comment = ? WHERE id = ?').run(
+      'Invited by Alex',
+      member
+    );
+    const pendingList = await request('GET', '/api/verification/pending', owner);
+    const pendingMember = pendingList.json().pending.find((row) => row.id === member);
+    check(
+      'pending list exposes the registration comment',
+      pendingMember && pendingMember.registration_comment === 'Invited by Alex',
+      pendingList.body
+    );
+
     const unauthCreate = await request('POST', '/api/verification/codes', null, {
       code: 'ABC123',
     });

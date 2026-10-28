@@ -36,6 +36,7 @@ function createDb(dbPath) {
       role TEXT NOT NULL DEFAULT 'member',
       verified INTEGER NOT NULL DEFAULT 0,
       codeword_hash TEXT,
+      registration_comment TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -82,6 +83,7 @@ function createDb(dbPath) {
     CREATE TABLE IF NOT EXISTS verification_settings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       enabled INTEGER NOT NULL DEFAULT 0,
+      delete_comment_on_approve INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -223,6 +225,36 @@ function createDb(dbPath) {
     db.exec('CREATE INDEX IF NOT EXISTS idx_messages_updated_at ON messages(updated_at)');
   } catch (e) {
     console.error('Failed to ensure messages schema is up to date:', e);
+  }
+
+  // Ensure new users columns exist on older databases
+  try {
+    const userColumns = db
+      .prepare('PRAGMA table_info(users)')
+      .all()
+      .map((c) => c.name);
+
+    if (!userColumns.includes('registration_comment')) {
+      db.exec('ALTER TABLE users ADD COLUMN registration_comment TEXT');
+    }
+  } catch (e) {
+    console.error('Failed to ensure users schema is up to date:', e);
+  }
+
+  // Ensure verification_settings columns exist on older databases
+  try {
+    const verificationColumns = db
+      .prepare('PRAGMA table_info(verification_settings)')
+      .all()
+      .map((c) => c.name);
+
+    if (!verificationColumns.includes('delete_comment_on_approve')) {
+      db.exec(
+        'ALTER TABLE verification_settings ADD COLUMN delete_comment_on_approve INTEGER NOT NULL DEFAULT 0'
+      );
+    }
+  } catch (e) {
+    console.error('Failed to ensure verification_settings schema is up to date:', e);
   }
 
   // Foreign keys were not enforced before this version, so old databases may

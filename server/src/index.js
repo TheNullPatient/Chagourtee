@@ -155,7 +155,7 @@ async function run() {
   }
 
   server.post('/api/auth/register', async (request, reply) => {
-    const { inviteId, login, password, codeword, bootstrap } = request.body || {};
+    const { inviteId, login, password, comment, bootstrap } = request.body || {};
     if (!login || !password) {
       return reply.code(400).send({ error: 'Login and password required' });
     }
@@ -199,25 +199,25 @@ async function run() {
       const verificationSetting = server.db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
       const isVerificationEnabled = verificationSetting ? !!verificationSetting.enabled : false;
 
-      if (isVerificationEnabled) {
-        if (typeof codeword !== 'string' || codeword.trim().length === 0) {
-          return reply.code(400).send({ error: 'Codeword required' });
+      let registrationComment = null;
+      if (isVerificationEnabled && comment !== undefined && comment !== null) {
+        if (typeof comment !== 'string') {
+          return reply.code(400).send({ error: 'Comment must be a string' });
         }
-        if (codeword.trim().length > 128) {
-          return reply.code(400).send({ error: 'Codeword must not exceed 128 characters' });
+        const trimmedComment = comment.trim();
+        if (trimmedComment.length > 500) {
+          return reply.code(400).send({ error: 'Comment must not exceed 500 characters' });
         }
+        registrationComment = trimmedComment.length > 0 ? trimmedComment : null;
       }
 
-      const codewordHash = typeof codeword === 'string' && codeword.trim().length > 0
-        ? hashPassword(codeword.trim())
-        : null;
       // Only the verification system may leave a new account unverified.
-      // Otherwise a stray codeword must not lock the user out.
+      // Otherwise a stray comment must not lock the user out.
       const shouldBeVerified = isVerificationEnabled ? 0 : 1;
-      
+
       server.db.prepare(
-        'INSERT INTO users (login, password_hash, role, verified, codeword_hash) VALUES (?, ?, ?, ?, ?)'
-      ).run(loginTrim, hashPassword(password), 'member', shouldBeVerified, isVerificationEnabled ? codewordHash : null);
+        'INSERT INTO users (login, password_hash, role, verified, registration_comment) VALUES (?, ?, ?, ?, ?)'
+      ).run(loginTrim, hashPassword(password), 'member', shouldBeVerified, registrationComment);
       server.db.prepare('UPDATE invites SET uses_count = uses_count + 1 WHERE id = ?').run(inviteId);
     }
 

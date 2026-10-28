@@ -440,8 +440,8 @@ module.exports = function (fastify) {
     broadcast({ type: 'verification_codes_changed', codes });
   }
 
-  function broadcastVerificationSettingsUpdated(enabled) {
-    broadcast({ type: 'verification_settings_updated', enabled });
+  function broadcastVerificationSettingsUpdated(enabled, deleteCommentOnApprove) {
+    broadcast({ type: 'verification_settings_updated', enabled, deleteCommentOnApprove });
   }
 
   function broadcastServerSettingsUpdated(settings) {

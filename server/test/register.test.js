@@ -14,7 +14,7 @@ const {
 
 const { createDb } = require('../src/db');
 
-test('registration requires a codeword when verification is enabled', async () => {
+test('registration stores an optional comment while verification is enabled', async () => {
   const { check, verify } = createChecker();
   const workspace = createWorkspace('register');
 
@@ -30,11 +30,11 @@ test('registration requires a codeword when verification is enabled', async () =
   const db = new Database(workspace.dbPath);
   let serverOutput = '';
 
-  async function register(login, codeword) {
+  async function register(login, comment) {
     const response = await fetch(`${server.baseUrl}/api/auth/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ inviteId, login, password: 'secret123', codeword }),
+      body: JSON.stringify({ inviteId, login, password: 'secret123', comment }),
     });
     return { status: response.status, body: await response.json() };
   }
@@ -50,45 +50,79 @@ test('registration requires a codeword when verification is enabled', async () =
 
     const suffix = String(Date.now()).slice(-6);
 
-    const noCodewordLogin = `nocw${suffix}`;
-    const noCodeword = await register(noCodewordLogin, undefined);
+    const withoutCommentLogin = `nocomment${suffix}`;
+    const withoutComment = await register(withoutCommentLogin, undefined);
     check(
-      'registration without a codeword is rejected when verification is on',
-      noCodeword.status === 400,
-      JSON.stringify(noCodeword)
+      'registration without a comment succeeds',
+      withoutComment.status === 200 && Boolean(withoutComment.body.user),
+      JSON.stringify(withoutComment)
+    );
+    check(
+      'registration response does not leak the comment',
+      withoutComment.body.user && !('registration_comment' in withoutComment.body.user),
+      JSON.stringify(withoutComment.body.user)
+    );
+    const withoutCommentRow = db
+      .prepare('SELECT verified, registration_comment FROM users WHERE login = ?')
+      .get(withoutCommentLogin);
+    check('new user is unverified when verification is on', withoutCommentRow && withoutCommentRow.verified === 0);
+    check(
+      'missing comment is stored as NULL',
+      withoutCommentRow && withoutCommentRow.registration_comment === null,
+      JSON.stringify(withoutCommentRow)
     );
 
-    const withCodewordLogin = `withcw${suffix}`;
-    const withCodeword = await register(withCodewordLogin, 'my-codeword');
-    check(
-      'registration with a codeword succeeds',
-      withCodeword.status === 200 && Boolean(withCodeword.body.user),
-      JSON.stringify(withCodeword)
+    const withCommentLogin = `withcomment${suffix}`;
+    const withComment = await register(
+      withCommentLogin,
+      '  Меня пригласил Alex.\nПишите в Telegram: @alex  '
     );
-    const created = db
-      .prepare('SELECT verified, codeword_hash FROM users WHERE login = ?')
-      .get(withCodewordLogin);
-    check('new user is unverified when verification is on', created && created.verified === 0);
     check(
-      'codeword is stored hashed',
-      created && Boolean(created.codeword_hash) && created.codeword_hash !== 'my-codeword'
+      'registration with a comment succeeds',
+      withComment.status === 200 && Boolean(withComment.body.user),
+      JSON.stringify(withComment)
+    );
+    const withCommentRow = db
+      .prepare('SELECT verified, registration_comment FROM users WHERE login = ?')
+      .get(withCommentLogin);
+    check(
+      'comment is trimmed and keeps line breaks',
+      withCommentRow &&
+        withCommentRow.registration_comment === 'Меня пригласил Alex.\nПишите в Telegram: @alex',
+      JSON.stringify(withCommentRow)
     );
 
-    // Disable verification at runtime and register with a stray codeword.
+    const tooLongLogin = `toolong${suffix}`;
+    const tooLong = await register(tooLongLogin, 'x'.repeat(501));
+    check(
+      'comment longer than 500 characters is rejected',
+      tooLong.status === 400,
+      JSON.stringify(tooLong)
+    );
+
+    const nonStringLogin = `nonstring${suffix}`;
+    const nonString = await register(nonStringLogin, 42);
+    check(
+      'non-string comment is rejected',
+      nonString.status === 400,
+      JSON.stringify(nonString)
+    );
+
+    // Disable verification at runtime and register with a stray comment.
     db.prepare('UPDATE verification_settings SET enabled = 0').run();
     const strayLogin = `stray${suffix}`;
-    const stray = await register(strayLogin, 'stray-codeword');
+    const stray = await register(strayLogin, 'stray-comment');
     check(
       'registration succeeds when verification is off',
       stray.status === 200,
       JSON.stringify(stray)
     );
     const strayUser = db
-      .prepare('SELECT verified, codeword_hash FROM users WHERE login = ?')
+      .prepare('SELECT verified, registration_comment FROM users WHERE login = ?')
       .get(strayLogin);
     check(
-      'a stray codeword does not lock the user out',
-      strayUser && strayUser.verified === 1 && strayUser.codeword_hash === null,
+      'a stray comment does not lock the user out or get stored',
+      strayUser && strayUser.verified === 1 && strayUser.registration_comment === null,
       JSON.stringify(strayUser)
     );
 

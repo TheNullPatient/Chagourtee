@@ -12,7 +12,7 @@ export default function Register() {
   const inviteId = searchParams.get('invite') ?? '';
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
-  const [codeword, setCodeword] = useState('');
+  const [comment, setComment] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [verificationEnabled, setVerificationEnabled] = useState(false);
@@ -39,7 +39,7 @@ export default function Register() {
         inviteId,
         login: login.trim(),
         password,
-        codeword: codeword.trim() || undefined,
+        comment: comment.trim() || undefined,
       });
       setUser(user);
       await refresh();
@@ -97,18 +97,17 @@ export default function Register() {
             </div>
             {verificationEnabled && (
               <div>
-                <label className="form-label">
-                  Кодовое слово <span className="label-required-mark">(обязательно)</span>
-                </label>
-                <input
-                  type="text"
-                  value={codeword}
-                  onChange={(e) => setCodeword(e.target.value)}
-                  placeholder="Для верификации владельцем"
-                  required={verificationEnabled}
+                <label className="form-label">Комментарий для владельца</label>
+                <textarea
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value.slice(0, 500))}
+                  placeholder="Например: кто вас пригласил и как с вами связаться"
+                  maxLength={500}
+                  rows={3}
                 />
-                <p className="register-codeword-hint">
-                  Это кодовое слово будет использовано для вашей верификации. Убедитесь, что знаете его.
+                <p className="register-comment-hint">
+                  Необязательно. Владелец увидит комментарий при рассмотрении заявки.
+                  <span className="register-comment-counter">{comment.length}/500</span>
                 </p>
               </div>
             )}

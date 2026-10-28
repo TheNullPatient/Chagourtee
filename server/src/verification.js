@@ -48,31 +48,53 @@ module.exports = function (fastify) {
   fastify.get('/api/verification/settings', {
     preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
   }, async () => {
-    const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
-    return { enabled: setting ? !!setting.enabled : false };
+    const setting = db.prepare('SELECT enabled, delete_comment_on_approve FROM verification_settings LIMIT 1').get();
+    return {
+      enabled: setting ? !!setting.enabled : false,
+      deleteCommentOnApprove: setting ? !!setting.delete_comment_on_approve : false,
+    };
   });
 
   // Включить/выключить систему верификации
   fastify.post('/api/verification/settings', {
     preHandler: [fastify.requireAuth, fastify.requireOwner],
   }, async (request, reply) => {
-    const { enabled } = request.body || {};
-    if (typeof enabled !== 'boolean') {
+    const { enabled, deleteCommentOnApprove } = request.body || {};
+    if (enabled !== undefined && typeof enabled !== 'boolean') {
       return reply.code(400).send({ error: 'enabled must be boolean' });
     }
+    if (deleteCommentOnApprove !== undefined && typeof deleteCommentOnApprove !== 'boolean') {
+      return reply.code(400).send({ error: 'deleteCommentOnApprove must be boolean' });
+    }
+    if (enabled === undefined && deleteCommentOnApprove === undefined) {
+      return reply.code(400).send({ error: 'No settings provided' });
+    }
 
-    // Удаляем старую запись, если существует, и создаем новую атомарно
-    db.transaction(() => {
-      db.prepare('DELETE FROM verification_settings').run();
-      db.prepare('INSERT INTO verification_settings (enabled) VALUES (?)').run(enabled ? 1 : 0);
-    })();
+    const current = db
+      .prepare('SELECT id, enabled, delete_comment_on_approve FROM verification_settings LIMIT 1')
+      .get();
+    const nextEnabled = enabled === undefined ? !!(current && current.enabled) : enabled;
+    const nextDeleteComment =
+      deleteCommentOnApprove === undefined
+        ? !!(current && current.delete_comment_on_approve)
+        : deleteCommentOnApprove;
+
+    if (current) {
+      db.prepare(
+        "UPDATE verification_settings SET enabled = ?, delete_comment_on_approve = ?, updated_at = datetime('now') WHERE id = ?"
+      ).run(nextEnabled ? 1 : 0, nextDeleteComment ? 1 : 0, current.id);
+    } else {
+      db.prepare(
+        'INSERT INTO verification_settings (enabled, delete_comment_on_approve) VALUES (?, ?)'
+      ).run(nextEnabled ? 1 : 0, nextDeleteComment ? 1 : 0);
+    }
 
     // Реалтайм: уведомляем всех о смене настроек верификации
     if (fastify.broadcastVerificationSettingsUpdated) {
-      fastify.broadcastVerificationSettingsUpdated(enabled);
+      fastify.broadcastVerificationSettingsUpdated(nextEnabled, nextDeleteComment);
     }
 
-    return { ok: true, enabled };
+    return { ok: true, enabled: nextEnabled, deleteCommentOnApprove: nextDeleteComment };
   });
 
   // Получить список ожидающих верификации пользователей
@@ -86,7 +108,7 @@ module.exports = function (fastify) {
     }
     
     const rows = db.prepare(`
-      SELECT id, login, created_at
+      SELECT id, login, created_at, registration_comment
       FROM users
       WHERE verified = 0 AND role = 'member'
       ORDER BY created_at ASC

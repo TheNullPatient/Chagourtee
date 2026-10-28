@@ -269,7 +269,7 @@ export const auth = {
     inviteId?: string;
     login: string;
     password: string;
-    codeword?: string;
+    comment?: string;
     bootstrap?: string;
   }) =>
     api<{ user: User }>('/api/auth/register', {
