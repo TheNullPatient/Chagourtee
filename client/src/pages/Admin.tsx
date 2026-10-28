@@ -38,6 +38,7 @@ function formatBytes(value: number): string {
 }
 
 type PendingUser = { id: number; login: string; created_at: string; registration_comment: string | null; };
+type SavedComment = { id: number; login: string; verified: number; created_at: string; registration_comment: string; };
 type UserWithDate = User & { created_at: string; };
 
 type AdminSectionId = 'invites' | 'server' | 'media' | 'rooms' | 'verification' | 'users';
@@ -69,6 +70,7 @@ export default function Admin() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [pending, setPending] = useState<PendingUser[]>([]);
+  const [savedComments, setSavedComments] = useState<SavedComment[]>([]);
   const [users, setUsers] = useState<UserWithDate[]>([]);
   const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null);
   const [inviteOpts, setInviteOpts] = useState({ maxUses: '', expiresInHours: '' });
@@ -117,6 +119,9 @@ export default function Admin() {
         setRooms(rRes.rooms);
         setPending(pRes.pending);
         setUsers(uRes.users);
+        verificationApi.comments()
+          .then((res) => setSavedComments(res.comments))
+          .catch(() => {});
       }
     } catch (err) {
       showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка загрузки', 'error');
@@ -307,6 +312,9 @@ export default function Admin() {
             verificationApi.pending()
               .then(res => setPending(res.pending))
               .catch(() => {});
+            verificationApi.comments()
+              .then(res => setSavedComments(res.comments))
+              .catch(() => {});
           }
           break;
 
@@ -319,6 +327,9 @@ export default function Admin() {
               .catch(() => {});
             verificationApi.pending()
               .then(res => setPending(res.pending))
+              .catch(() => {});
+            verificationApi.comments()
+              .then(res => setSavedComments(res.comments))
               .catch(() => {});
           }
           break;
@@ -1275,6 +1286,35 @@ export default function Admin() {
                           Отклонить
                         </button>
                       </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {savedComments.length > 0 && (
+            <div className="card">
+              <h3 className="admin-card-title">
+                <span className="icon-inline" aria-hidden>
+                  <IconShield />
+                </span>
+                Сохранённые комментарии ({savedComments.length})
+              </h3>
+              <div className="admin-list-col--lg">
+                {savedComments.map((item) => (
+                  <div key={item.id} className="admin-pending-card">
+                    <div className="admin-pending-login">
+                      <span className="icon-inline" aria-hidden>
+                        <IconUser />
+                      </span>
+                      {item.login}
+                    </div>
+                    <div className="admin-pending-comment">
+                      <div className="admin-pending-comment-label">
+                        Подтверждён · {new Date(item.created_at).toLocaleDateString()}
+                      </div>
+                      <div className="admin-pending-comment-text">{item.registration_comment}</div>
                     </div>
                   </div>
                 ))}

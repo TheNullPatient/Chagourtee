@@ -440,6 +440,7 @@ export const verification = {
       body: JSON.stringify(settings),
     }),
   pending: () => api<{ pending: { id: number; login: string; created_at: string; registration_comment: string | null }[] }>('/api/verification/pending'),
+  comments: () => api<{ comments: { id: number; login: string; verified: number; created_at: string; registration_comment: string }[] }>('/api/verification/comments'),
   approve: (userId: number) =>
     api<{ ok: boolean }>('/api/verification/approve', {
       method: 'POST',

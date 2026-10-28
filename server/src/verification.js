@@ -181,6 +181,20 @@ module.exports = function (fastify) {
     return { pending: rows };
   });
 
+  // Сохранённые комментарии подтверждённых участников. Доступны только
+  // владельцу и модераторам, чтобы не раскрывать их всем пользователям.
+  fastify.get('/api/verification/comments', {
+    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+  }, async () => {
+    const rows = db.prepare(`
+      SELECT id, login, verified, created_at, registration_comment
+      FROM users
+      WHERE registration_comment IS NOT NULL AND verified = 1
+      ORDER BY created_at DESC
+    `).all();
+    return { comments: rows };
+  });
+
   // Одобрение пользователя (ручная верификация)
   fastify.post('/api/verification/approve', {
     preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],

@@ -285,6 +285,7 @@ npm run lint
 - `GET /api/rooms/:id/messages`, `POST /api/rooms/:id/messages` – сообщения
 - `GET /api/invites` – инвайты
 - `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – ручная верификация
+- `GET /api/verification/comments` – сохранённые комментарии подтверждённых участников
 - `GET/PATCH /api/profile/registration-comment` – комментарий ожидающего пользователя для владельца
 - `POST /api/profile/change-password`, `change-login` – профиль
 - WebSocket `/ws` – новые сообщения, типинг, присутствие (после входа по cookie)

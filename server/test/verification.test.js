@@ -187,6 +187,22 @@ test('verification codes are hashed, single-use and rate limited', async () => {
       keepApprove.body
     );
 
+    const savedComments = await request('GET', '/api/verification/comments', owner);
+    check(
+      'saved comments are visible to the owner after approval',
+      savedComments.statusCode === 200 &&
+        savedComments
+          .json()
+          .comments.some((row) => row.id === approvedWithoutDeletion && row.registration_comment === 'keep me'),
+      savedComments.body
+    );
+    const memberComments = await request('GET', '/api/verification/comments', other);
+    check(
+      'saved comments are hidden from members',
+      memberComments.statusCode === 403,
+      memberComments.body
+    );
+
     const unauthCreate = await request('POST', '/api/verification/codes', null, {
       code: 'ABC123',
     });
