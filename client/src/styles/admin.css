@@ -68,6 +68,10 @@
   margin-top: 0.5rem;
 }
 
+.admin-input-spaced {
+  margin-top: 0.5rem;
+}
+
 .admin-empty-hint {
   color: var(--text-muted);
   font-style: italic;

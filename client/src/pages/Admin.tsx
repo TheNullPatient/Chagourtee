@@ -1079,7 +1079,7 @@ export default function Admin() {
                     value={uploadLimitInput}
                     onChange={(e) => setUploadLimitInput(e.target.value)}
                     placeholder="52428800"
-                    style={{ marginTop: '0.5rem' }}
+                    className="admin-input-spaced"
                   />
                 )}
               </label>

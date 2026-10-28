@@ -1900,7 +1900,6 @@ export default function Chat() {
   // Function to download all media files from a message as a ZIP archive
   const downloadAllMediaFromMessage = async (message: Message) => {
     if (!message.media || message.media.length === 0) {
-      console.log("Сообщение не содержит медиафайлов");
       return;
     }
     
