@@ -99,23 +99,6 @@ function addAuthUtils(fastify, _opts, done) {
 function authRoutes(fastify, _opts, done) {
   const db = fastify.db;
 
-  fastify.addHook('preHandler', async function (request, reply) {
-    if (request.session?.userId) {
-      const user = db.prepare('SELECT id, login, role, verified FROM users WHERE id = ?').get(request.session.userId);
-      if (!user) {
-        request.session = null;
-        return;
-      }
-      if (!user.verified && !request.url.startsWith('/api/auth/') && !request.url.startsWith('/api/profile')) {
-        const allowed = ['/api/auth/me', '/api/auth/logout', '/api/profile/change-password', '/api/profile/change-login'];
-        const allowedMatch = allowed.some((a) => request.url === a || request.url.startsWith(a + '?'));
-        if (!allowedMatch) {
-          return reply.code(403).send({ error: 'Account pending verification' });
-        }
-      }
-    }
-  });
-
   fastify.get('/api/auth/me', {
     preHandler: [fastify.requireAuth],
   }, async (request, reply) => {

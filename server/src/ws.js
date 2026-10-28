@@ -52,6 +52,23 @@ module.exports = function (fastify) {
       ws.close(4001, 'Unauthorized');
       return;
     }
+
+    // Unverified accounts must not receive room traffic or previews, even if
+    // they manage to open a WebSocket connection directly.
+    const connectionUser = fastify.db
+      .prepare('SELECT verified FROM users WHERE id = ?')
+      .get(userId);
+    if (!connectionUser) {
+      ws.close(4001, 'Unauthorized');
+      return;
+    }
+    const verificationSetting = fastify.db
+      .prepare('SELECT enabled FROM verification_settings LIMIT 1')
+      .get();
+    if (verificationSetting && verificationSetting.enabled && !connectionUser.verified) {
+      ws.close(4003, 'Verification required');
+      return;
+    }
     
     // Set up heartbeat mechanism
     let heartbeatInterval = setInterval(() => {

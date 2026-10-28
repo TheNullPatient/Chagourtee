@@ -82,37 +82,45 @@ async function run() {
     request.user = server.getUser(row.user_id);
   });
 
-  // Add verification check for protected routes
+  // Single verification gate: while verification is enabled, unverified
+  // accounts may only use the endpoints needed to finish verification or to
+  // manage their own credentials. Everything else under /api is blocked.
+  const VERIFICATION_ALLOWED_EXACT = new Set([
+    '/api/verification/status',
+    '/api/verification/codes/use',
+    '/api/profile/change-password',
+    '/api/profile/change-login',
+    '/api/profile/registration-comment',
+    '/api/version',
+    '/api/server/settings',
+  ]);
+
   server.addHook('preHandler', async function (request, reply) {
+    if (!request.session || !request.user) return;
+
+    const routeUrl = request.routeOptions?.url || request.url.split('?')[0];
+    if (!routeUrl || !routeUrl.startsWith('/api/')) return;
+    if (routeUrl.startsWith('/api/auth/')) return;
+    if (VERIFICATION_ALLOWED_EXACT.has(routeUrl)) return;
+    if (request.user.verified) return;
+
     const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
-    const verificationEnabled = setting ? !!setting.enabled : false;
-    
-    // Only check verification for authenticated users on protected routes
-    if (request.session && request.user && verificationEnabled) {
-      const protectedPaths = [
-        '/api/rooms',
-        '/api/messages',
-        '/api/invites',
-        '/api/profile/change-password',
-        '/api/profile/change-login'
-      ];
-      
-      // Check if the current path is a protected route
-      const isProtectedRoute = protectedPaths.some(path => 
-        request.routeOptions.url.startsWith(path)
-      );
-      
-      // Also check if it's a specific message route
-      const isMessageRoute = /^\/api\/rooms\/\d+\/messages/.test(request.routeOptions.url);
-      
-      if ((isProtectedRoute || isMessageRoute) && !request.user.verified) {
-        return reply.code(403).send({ 
-          error: 'Account verification required',
-          code: 'ACCOUNT_NOT_VERIFIED'
-        });
-      }
-    }
+    if (!setting || !setting.enabled) return;
+
+    return reply.code(403).send({
+      error: 'Account verification required',
+      code: 'ACCOUNT_NOT_VERIFIED',
+    });
   });
+
+  // An account left unverified while verification is off would be locked out
+  // by the client route guard even though the server already allows access.
+  const initialVerificationSetting = db
+    .prepare('SELECT enabled FROM verification_settings LIMIT 1')
+    .get();
+  if (!initialVerificationSetting || !initialVerificationSetting.enabled) {
+    db.prepare("UPDATE users SET verified = 1 WHERE verified = 0 AND role = 'member'").run();
+  }
 
   await server.register(authRoutes);
 

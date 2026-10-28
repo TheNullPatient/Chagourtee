@@ -78,20 +78,53 @@ module.exports = function (fastify) {
       deleteCommentOnApprove === undefined
         ? !!(current && current.delete_comment_on_approve)
         : deleteCommentOnApprove;
+    const wasEnabled = !!(current && current.enabled);
 
-    if (current) {
-      db.prepare(
-        "UPDATE verification_settings SET enabled = ?, delete_comment_on_approve = ?, updated_at = datetime('now') WHERE id = ?"
-      ).run(nextEnabled ? 1 : 0, nextDeleteComment ? 1 : 0, current.id);
-    } else {
-      db.prepare(
-        'INSERT INTO verification_settings (enabled, delete_comment_on_approve) VALUES (?, ?)'
-      ).run(nextEnabled ? 1 : 0, nextDeleteComment ? 1 : 0);
-    }
+    const approvedUserIds = [];
+    db.transaction(() => {
+      if (current) {
+        db.prepare(
+          "UPDATE verification_settings SET enabled = ?, delete_comment_on_approve = ?, updated_at = datetime('now') WHERE id = ?"
+        ).run(nextEnabled ? 1 : 0, nextDeleteComment ? 1 : 0, current.id);
+      } else {
+        db.prepare(
+          'INSERT INTO verification_settings (enabled, delete_comment_on_approve) VALUES (?, ?)'
+        ).run(nextEnabled ? 1 : 0, nextDeleteComment ? 1 : 0);
+      }
+
+      // Turning verification off must not leave anyone locked out.
+      if (wasEnabled && !nextEnabled) {
+        const pendingUsers = db
+          .prepare("SELECT id FROM users WHERE verified = 0 AND role = 'member'")
+          .all();
+        const approve = nextDeleteComment
+          ? db.prepare(
+              'UPDATE users SET verified = 1, registration_comment = NULL WHERE id = ? AND verified = 0'
+            )
+          : db.prepare('UPDATE users SET verified = 1 WHERE id = ? AND verified = 0');
+        for (const pendingUser of pendingUsers) {
+          if (approve.run(pendingUser.id).changes > 0) approvedUserIds.push(pendingUser.id);
+        }
+      }
+    })();
 
     // Реалтайм: уведомляем всех о смене настроек верификации
     if (fastify.broadcastVerificationSettingsUpdated) {
       fastify.broadcastVerificationSettingsUpdated(nextEnabled, nextDeleteComment);
+    }
+
+    for (const userId of approvedUserIds) {
+      if (fastify.broadcastToUser) {
+        fastify.broadcastToUser(userId, { type: 'user_verified', userId });
+      }
+      if (fastify.broadcastAll) {
+        const updatedUser = db
+          .prepare('SELECT id, login, role, verified, created_at FROM users WHERE id = ?')
+          .get(userId);
+        if (updatedUser) {
+          fastify.broadcastAll({ type: 'user_verification_changed', user: updatedUser });
+        }
+      }
     }
 
     return { ok: true, enabled: nextEnabled, deleteCommentOnApprove: nextDeleteComment };
@@ -121,16 +154,13 @@ module.exports = function (fastify) {
     preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
   }, async (request, reply) => {
     const setting = db
-      .prepare('SELECT enabled, delete_comment_on_approve FROM verification_settings LIMIT 1')
+      .prepare('SELECT delete_comment_on_approve FROM verification_settings LIMIT 1')
       .get();
-    if (!setting || !setting.enabled) {
-      return reply.code(400).send({ error: 'Verification system is disabled' });
-    }
     
     const { userId } = request.body || {};
     if (!userId) return reply.code(400).send({ error: 'userId required' });
 
-    const r = setting.delete_comment_on_approve
+    const r = setting && setting.delete_comment_on_approve
       ? db
           .prepare(
             'UPDATE users SET verified = 1, registration_comment = NULL WHERE id = ? AND verified = 0'
@@ -163,11 +193,6 @@ module.exports = function (fastify) {
   fastify.post('/api/verification/reject', {
     preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
   }, async (request, reply) => {
-    const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
-    if (!setting || !setting.enabled) {
-      return reply.code(400).send({ error: 'Verification system is disabled' });
-    }
-    
     const { userId } = request.body || {};
     if (!userId) return reply.code(400).send({ error: 'userId required' });
     const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(Number(userId));
@@ -275,13 +300,6 @@ module.exports = function (fastify) {
   fastify.post('/api/verification/codes/use', {
     preHandler: [fastify.requireAuth],
   }, async (request, reply) => {
-    const setting = db
-      .prepare('SELECT enabled, delete_comment_on_approve FROM verification_settings LIMIT 1')
-      .get();
-    if (!setting || !setting.enabled) {
-      return reply.code(400).send({ error: 'Verification system is disabled' });
-    }
-
     const userId = request.session.userId;
     const currentUser = fastify.getUser(userId);
     if (!currentUser) {
@@ -289,6 +307,13 @@ module.exports = function (fastify) {
     }
     if (currentUser.verified) {
       return { ok: true, alreadyVerified: true };
+    }
+
+    const setting = db
+      .prepare('SELECT enabled, delete_comment_on_approve FROM verification_settings LIMIT 1')
+      .get();
+    if (!setting || !setting.enabled) {
+      return reply.code(400).send({ error: 'Verification system is disabled' });
     }
 
     const { code } = request.body || {};
