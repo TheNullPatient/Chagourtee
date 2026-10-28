@@ -473,6 +473,20 @@ button.chat-room-link:hover {
   background: var(--bg-hover);
 }
 
+.edit-add-file {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-default);
+}
+
+.edit-add-file:hover {
+  background: var(--bg-hover);
+}
+
 .selected-files-grid {
   display: flex;
   gap: 0.5rem;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import type { Room, Message, User, MessageListResponse, MediaFile, MediaUploadSettings } from '../api';
 import { rooms as roomsApi, messages as messagesApi, auth as authApi, users, media } from '../api';
 import {
@@ -90,6 +90,63 @@ function formatBytes(size: number): string {
   return `${size} Б`;
 }
 
+/**
+ * Preview for a file selected from disk.
+ *
+ * The blob URL is created and revoked inside an effect instead of during
+ * render, otherwise every re-render leaks a new object URL.
+ */
+function LocalFilePreview({ file }: { file: File }) {
+  const imageRef = useRef<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    if (!file.type.startsWith('image/')) return;
+
+    const objectUrl = URL.createObjectURL(file);
+    if (imageRef.current) {
+      imageRef.current.src = objectUrl;
+    }
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+
+  if (file.type.startsWith('image/')) {
+    return (
+      <div className="file-preview">
+        <img ref={imageRef} alt="Preview" />
+      </div>
+    );
+  }
+
+  if (file.type.startsWith('video/')) {
+    return (
+      <div className="file-preview video-preview">
+        <div className="video-placeholder">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polygon points="23 7 16 12 23 17 23 7"></polygon>
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+          </svg>
+        </div>
+      </div>
+    );
+  }
+
+  if (file.type.startsWith('audio/')) {
+    return (
+      <div className="file-preview audio-preview">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M9 18V5l12-2v13"></path>
+          <circle cx="6" cy="18" r="3"></circle>
+          <circle cx="18" cy="16" r="3"></circle>
+        </svg>
+      </div>
+    );
+  }
+
+  const ext = file.name.split('.').pop()?.substring(0, 3) || 'FILE';
+  return <div className="file-preview other">{ext.toUpperCase()}</div>;
+}
+
 function getUploadErrorMessage(
   error: unknown,
   fallbackMaxFileSize: number | null | undefined
@@ -121,6 +178,7 @@ function getUploadErrorMessage(
 
 export default function Chat() {
   const { roomId: routeRoomId } = useParams();
+  const navigate = useNavigate();
   const { showToast } = useToast();
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -201,43 +259,10 @@ export default function Chat() {
   // Store scroll position to preserve it between room switches
   const scrollPositions = useRef<Record<number, number>>({}); // Store scroll position per room
   
-  // Rate limiting state
+  // Throttle accidental double submits. Longer limits are enforced by the
+  // server, which answers 429 and is surfaced as a toast.
   const lastMessageTimeRef = useRef<number>(0);
-  const [isRateLimited, setIsRateLimited] = useState(false);
-  const [rateLimitEndTime, setRateLimitEndTime] = useState<number | null>(null);
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(0);
   const rateLimitDelay = 300; // Minimum delay between messages in milliseconds
-  
-  // Update the seconds remaining every second when rate limited
-  useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
-    
-    if (isRateLimited && rateLimitEndTime) {
-      // Set initial value
-      setSecondsRemaining(Math.max(0, Math.ceil((rateLimitEndTime - Date.now()) / 1000)));
-      
-      // Update every second
-      interval = setInterval(() => {
-        const remaining = Math.max(0, Math.ceil((rateLimitEndTime - Date.now()) / 1000));
-        setSecondsRemaining(remaining);
-        
-        if (remaining <= 0) {
-          clearInterval(interval as NodeJS.Timeout);
-          setIsRateLimited(false);
-          setRateLimitEndTime(null);
-        }
-      }, 1000);
-    } else {
-      setSecondsRemaining(0);
-    }
-    
-    // Cleanup interval on unmount or when conditions change
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [isRateLimited, rateLimitEndTime]);
 
   useLayoutEffect(() => {
     const el = contextMenuRef.current;
@@ -247,19 +272,7 @@ export default function Chat() {
     }
   }, [contextMenu.visible, contextMenu.x, contextMenu.y]);
 
-  // Render rate limit warning with dynamic timer
-  const renderRateLimitWarning = () => {
-    if (!isRateLimited || !rateLimitEndTime) return null;
-    
-    return (
-      <div className="rate-limit-warning-container">
-        <div className="rate-limit-warning">
-          {secondsRemaining} сек до разблокировки...
-        </div>
-      </div>
-    );
-  };
-
+  // Render upload warning
   const renderUploadWarning = () => {
     if (!uploadWarning) return null;
     return (
@@ -519,9 +532,8 @@ export default function Chat() {
         case 'room_deleted':
           // Handle room deletion notification
           if (data.roomId === roomId) {
-            // Navigate away from the deleted room
-            window.location.hash = '#/chat';
-            window.location.reload(); // Force refresh to update UI
+            // Navigate away from the deleted room without reloading the page
+            navigate('/chat', { replace: true });
           }
           // Удаляем комнату из локального списка
           setRoomList(prev => prev.filter(r => r.id !== data.roomId));
@@ -688,7 +700,7 @@ export default function Chat() {
       // Remove message handler when component unmounts
       removeMessageHandler(handleGlobalWsMessage);
     };
-  }, [roomId, user]); // Re-run when room or user changes so unread logic sees fresh state
+  }, [roomId, user, navigate]); // Re-run when room or user changes so unread logic sees fresh state
 
   // Handle WebSocket messages related to chat and room-specific events
   useEffect(() => {
@@ -1401,13 +1413,9 @@ export default function Chat() {
     
     if (!roomId || (!sendText.trim() && selectedFiles.length === 0)) return;
     
-    // Check rate limiting
+    // Ignore a submit that lands within the double-submit window.
     const now = Date.now();
     if (now - lastMessageTimeRef.current < rateLimitDelay) {
-      setIsRateLimited(true);
-      const remainingBlockTime = 3000; // Block for 3 seconds
-      setRateLimitEndTime(now + remainingBlockTime);
-      setSecondsRemaining(Math.ceil(remainingBlockTime / 1000));
       return;
     }
     
@@ -1454,34 +1462,6 @@ export default function Chat() {
     }
   }
 
-  // Effect to update the timer every second while rate limited
-  useEffect(() => {
-    if (!isRateLimited || !rateLimitEndTime) {
-      return;
-    }
-
-    const updateTimer = () => {
-      const now = Date.now();
-      const remaining = Math.ceil((rateLimitEndTime - now) / 1000);
-      
-      if (remaining <= 0) {
-        setIsRateLimited(false);
-        setRateLimitEndTime(null);
-        setSecondsRemaining(0);
-      } else {
-        setSecondsRemaining(remaining);
-      }
-    };
-
-    // Update immediately
-    updateTimer();
-    
-    // Update every second
-    const intervalId = setInterval(updateTimer, 1000);
-    
-    return () => clearInterval(intervalId);
-  }, [isRateLimited, rateLimitEndTime]);
-  
   // Auto-resize textarea based on content
   const adjustTextareaHeight = useCallback(() => {
     if (textareaRef.current) {
@@ -2276,6 +2256,11 @@ export default function Chat() {
                       <div className="selected-files-header">
                         <h4>Файлы сообщения:</h4>
                         <div className="clear-buttons-container">
+                        {isUploadEnabled && !isStorageFull && (
+                          <label htmlFor="edit-file-upload" className="edit-add-file">
+                            <Marquee>Добавить файл</Marquee>
+                          </label>
+                        )}
                         {editingMessage.media && editingMessage.media.length > 0 && (
                           <button 
                             type="button" 
@@ -2385,48 +2370,7 @@ export default function Chat() {
                         
                         {/* Render newly selected files */}
                         {selectedFiles.map((file, index) => {
-                          // Determine file type and show appropriate preview
-                          let previewElement;
-                          if (file.type.startsWith('image/')) {
-                            // For images, show a thumbnail
-                            const fileUrl = URL.createObjectURL(file);
-                            previewElement = (
-                              <div className="file-preview">
-                                <img src={fileUrl} alt="Preview" />
-                              </div>
-                            );
-                          } else if (file.type.startsWith('video/')) {
-                            // For videos, show a placeholder with a play icon
-                            previewElement = (
-                              <div className="file-preview video-preview">
-                                <div className="video-placeholder">
-                                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <polygon points="23 7 16 12 23 17 23 7"></polygon>
-                                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
-                                  </svg>
-                                </div>
-                              </div>
-                            );
-                          } else if (file.type.startsWith('audio/')) {
-                            // For audio, show a music note icon
-                            previewElement = (
-                              <div className="file-preview audio-preview">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <path d="M9 18V5l12-2v13"></path>
-                                  <circle cx="6" cy="18" r="3"></circle>
-                                  <circle cx="18" cy="16" r="3"></circle>
-                                </svg>
-                              </div>
-                            );
-                          } else {
-                            // For other files, show the first 3 letters of the extension
-                            const ext = file.name.split('.').pop()?.substring(0, 3) || 'FILE';
-                            previewElement = (
-                              <div className="file-preview other">
-                                {ext.toUpperCase()}
-                              </div>
-                            );
-                          }
+                          const previewElement = <LocalFilePreview file={file} />;
                           
                           // Format file size for display
                           const formattedSize = file.size > 1024 * 1024 
@@ -2510,48 +2454,7 @@ export default function Chat() {
                   </div>
                   <div className="selected-files-grid">
                     {selectedFiles.map((file, index) => {
-                      // Determine file type and show appropriate preview
-                      let previewElement;
-                      if (file.type.startsWith('image/')) {
-                        // For images, show a thumbnail
-                        const fileUrl = URL.createObjectURL(file);
-                        previewElement = (
-                          <div className="file-preview">
-                            <img src={fileUrl} alt="Preview" />
-                          </div>
-                        );
-                      } else if (file.type.startsWith('video/')) {
-                        // For videos, show a placeholder with a play icon
-                        previewElement = (
-                          <div className="file-preview video-preview">
-                            <div className="video-placeholder">
-                              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <polygon points="23 7 16 12 23 17 23 7"></polygon>
-                                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
-                              </svg>
-                            </div>
-                          </div>
-                        );
-                      } else if (file.type.startsWith('audio/')) {
-                        // For audio, show a music note icon
-                        previewElement = (
-                          <div className="file-preview audio-preview">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M9 18V5l12-2v13"></path>
-                              <circle cx="6" cy="18" r="3"></circle>
-                              <circle cx="18" cy="16" r="3"></circle>
-                            </svg>
-                          </div>
-                        );
-                      } else {
-                        // For other files, show the first 3 letters of the extension
-                        const ext = file.name.split('.').pop()?.substring(0, 3) || 'FILE';
-                        previewElement = (
-                          <div className="file-preview other">
-                            {ext.toUpperCase()}
-                          </div>
-                        );
-                      }
+                      const previewElement = <LocalFilePreview file={file} />;
                       
                       // Format file size for display
                       const formattedSize = file.size > 1024 * 1024 
@@ -2597,7 +2500,6 @@ export default function Chat() {
                 </div>
               )}
               
-              {renderRateLimitWarning()}
               {renderUploadWarning()}
               
               <form onSubmit={(e) => {
@@ -2746,7 +2648,6 @@ export default function Chat() {
                   autoFocus
                   rows={1}
                   onKeyDown={handleKeyDown}
-                  disabled={isRateLimited}
                   className="chat-form-textarea"
                 />
                 
@@ -2757,8 +2658,7 @@ export default function Chat() {
                       (!editingMessage && !sendText.trim() && selectedFiles.length === 0) ||
                       (editingMessage && !editingMessage.body.trim() && 
                        (!editingMessage.media || editingMessage.media.length === 0) && 
-                       selectedFiles.length === 0)) || 
-                    isRateLimited // Disable when rate limited
+                       selectedFiles.length === 0))
                   }>
                   <span className="send-text">{editingMessage ? 'Сохранить' : 'Отправить'}</span>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
