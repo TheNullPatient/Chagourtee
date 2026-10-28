@@ -434,10 +434,10 @@ export const serverVersion = {
 export const verification = {
   status: () => api<{ enabled: boolean }>('/api/verification/status'),
   settings: () => api<{ enabled: boolean, deleteCommentOnApprove: boolean }>('/api/verification/settings'),
-  updateSettings: (enabled: boolean) => 
-    api<{ ok: boolean, enabled: boolean }>('/api/verification/settings', {
+  updateSettings: (settings: { enabled?: boolean; deleteCommentOnApprove?: boolean }) =>
+    api<{ ok: boolean, enabled: boolean, deleteCommentOnApprove: boolean }>('/api/verification/settings', {
       method: 'POST',
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(settings),
     }),
   pending: () => api<{ pending: { id: number; login: string; created_at: string; registration_comment: string | null }[] }>('/api/verification/pending'),
   approve: (userId: number) =>

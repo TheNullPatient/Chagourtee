@@ -153,6 +153,40 @@ test('verification codes are hashed, single-use and rate limited', async () => {
       pendingList.body
     );
 
+    const approvedWithDeletion = seedUser(db, unique('v_approved'), { verified: false });
+    db.prepare('UPDATE users SET registration_comment = ? WHERE id = ?').run(
+      'delete me',
+      approvedWithDeletion
+    );
+    const autoApprove = await request('POST', '/api/verification/approve', owner, {
+      userId: approvedWithDeletion,
+    });
+    check(
+      'approve works and clears the comment when auto-deletion is on',
+      autoApprove.statusCode === 200 &&
+        db.prepare('SELECT verified FROM users WHERE id = ?').get(approvedWithDeletion).verified === 1 &&
+        db.prepare('SELECT registration_comment FROM users WHERE id = ?').get(approvedWithDeletion)
+          .registration_comment === null,
+      autoApprove.body
+    );
+
+    await request('POST', '/api/verification/settings', owner, { deleteCommentOnApprove: false });
+    const approvedWithoutDeletion = seedUser(db, unique('v_kept'), { verified: false });
+    db.prepare('UPDATE users SET registration_comment = ? WHERE id = ?').run(
+      'keep me',
+      approvedWithoutDeletion
+    );
+    const keepApprove = await request('POST', '/api/verification/approve', owner, {
+      userId: approvedWithoutDeletion,
+    });
+    check(
+      'approve keeps the comment when auto-deletion is off',
+      keepApprove.statusCode === 200 &&
+        db.prepare('SELECT registration_comment FROM users WHERE id = ?').get(approvedWithoutDeletion)
+          .registration_comment === 'keep me',
+      keepApprove.body
+    );
+
     const unauthCreate = await request('POST', '/api/verification/codes', null, {
       code: 'ABC123',
     });

@@ -307,6 +307,34 @@
   gap: 0.35rem;
 }
 
+.admin-pending-comment {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.admin-pending-comment-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.admin-pending-comment-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.admin-pending-comment-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .admin-actions-row {
   display: flex;
   gap: 0.5rem;

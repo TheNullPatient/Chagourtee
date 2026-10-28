@@ -120,14 +120,23 @@ module.exports = function (fastify) {
   fastify.post('/api/verification/approve', {
     preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
   }, async (request, reply) => {
-    const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
+    const setting = db
+      .prepare('SELECT enabled, delete_comment_on_approve FROM verification_settings LIMIT 1')
+      .get();
     if (!setting || !setting.enabled) {
       return reply.code(400).send({ error: 'Verification system is disabled' });
     }
     
     const { userId } = request.body || {};
     if (!userId) return reply.code(400).send({ error: 'userId required' });
-    const r = db.prepare('UPDATE users SET verified = 1 WHERE id = ? AND verified = 0').run(Number(userId));
+
+    const r = setting.delete_comment_on_approve
+      ? db
+          .prepare(
+            'UPDATE users SET verified = 1, registration_comment = NULL WHERE id = ? AND verified = 0'
+          )
+          .run(Number(userId))
+      : db.prepare('UPDATE users SET verified = 1 WHERE id = ? AND verified = 0').run(Number(userId));
     if (r.changes === 0) return reply.code(404).send({ error: 'User not found or already verified' });
     
     // Broadcast user verification to the user
@@ -266,7 +275,9 @@ module.exports = function (fastify) {
   fastify.post('/api/verification/codes/use', {
     preHandler: [fastify.requireAuth],
   }, async (request, reply) => {
-    const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
+    const setting = db
+      .prepare('SELECT enabled, delete_comment_on_approve FROM verification_settings LIMIT 1')
+      .get();
     if (!setting || !setting.enabled) {
       return reply.code(400).send({ error: 'Verification system is disabled' });
     }
@@ -339,7 +350,13 @@ module.exports = function (fastify) {
         .prepare('UPDATE verification_codes SET used = 1 WHERE id = ? AND used = 0')
         .run(matchedCode.id);
       if (markUsed.changes === 0) return false;
-      db.prepare('UPDATE users SET verified = 1 WHERE id = ?').run(userId);
+      if (setting.delete_comment_on_approve) {
+        db.prepare('UPDATE users SET verified = 1, registration_comment = NULL WHERE id = ?').run(
+          userId
+        );
+      } else {
+        db.prepare('UPDATE users SET verified = 1 WHERE id = ?').run(userId);
+      }
       return true;
     })();
 

@@ -37,7 +37,7 @@ function formatBytes(value: number): string {
   return `${value} Б`;
 }
 
-type PendingUser = { id: number; login: string; created_at: string; };
+type PendingUser = { id: number; login: string; created_at: string; registration_comment: string | null; };
 type UserWithDate = User & { created_at: string; };
 
 type AdminSectionId = 'invites' | 'server' | 'media' | 'rooms' | 'verification' | 'users';
@@ -73,6 +73,7 @@ export default function Admin() {
   const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null);
   const [inviteOpts, setInviteOpts] = useState({ maxUses: '', expiresInHours: '' });
   const [verificationEnabled, setVerificationEnabled] = useState(false);
+  const [deleteCommentOnApprove, setDeleteCommentOnApprove] = useState(false);
   const [codes, setCodes] = useState<{id: number, created_by_login: string, used: number, created_at: string, expires_at: string}[]>([]);
   const [customCode, setCustomCode] = useState<string>('');
   const { rawName, displayName, setRawNameLocal } = useServerName();
@@ -132,7 +133,10 @@ export default function Admin() {
     // Load verification settings only for owners
     if (user.role === 'owner') {
       verificationApi.settings()
-        .then(data => setVerificationEnabled(!!data.enabled))
+        .then(data => {
+          setVerificationEnabled(!!data.enabled);
+          setDeleteCommentOnApprove(!!data.deleteCommentOnApprove);
+        })
         .catch(err => DEBUG_MODE && console.error('Error fetching verification settings:', err));
 
       media.getStorageSettings()
@@ -284,6 +288,10 @@ export default function Admin() {
               ? data.enabled
               : !!data.settings?.enabled;
             setVerificationEnabled(enabled);
+            const deleteComment = typeof data.deleteCommentOnApprove === 'boolean'
+              ? data.deleteCommentOnApprove
+              : !!data.settings?.deleteCommentOnApprove;
+            setDeleteCommentOnApprove(deleteComment);
           }
           break;
 
@@ -678,8 +686,9 @@ export default function Admin() {
 
   const disableVerification = async () => {
     try {
-      const response = await verificationApi.updateSettings(false);
+      const response = await verificationApi.updateSettings({ enabled: false });
       setVerificationEnabled(response.enabled);
+      setDeleteCommentOnApprove(response.deleteCommentOnApprove);
       showToast('Система верификации отключена', 'success');
     } catch (error) {
       DEBUG_MODE && console.error('Failed to disable verification:', error);
@@ -689,12 +698,36 @@ export default function Admin() {
 
   const enableVerification = async () => {
     try {
-      const response = await verificationApi.updateSettings(true);
+      const response = await verificationApi.updateSettings({ enabled: true });
       setVerificationEnabled(response.enabled);
+      setDeleteCommentOnApprove(response.deleteCommentOnApprove);
       showToast('Система верификации включена', 'success');
     } catch (error) {
       DEBUG_MODE && console.error('Failed to enable verification:', error);
       showToast('Ошибка при включении верификации', 'error');
+    }
+  };
+
+  const handleCommentDeletionToggle = async () => {
+    if (user?.role !== 'owner') {
+      showToast('Только владелец может изменять настройки верификации', 'error');
+      return;
+    }
+
+    try {
+      const response = await verificationApi.updateSettings({
+        deleteCommentOnApprove: !deleteCommentOnApprove,
+      });
+      setDeleteCommentOnApprove(response.deleteCommentOnApprove);
+      showToast(
+        response.deleteCommentOnApprove
+          ? 'Комментарий будет удаляться после подтверждения'
+          : 'Комментарий будет сохраняться после подтверждения',
+        'success'
+      );
+    } catch (error) {
+      DEBUG_MODE && console.error('Failed to update comment deletion setting:', error);
+      showToast('Ошибка при изменении настройки', 'error');
     }
   };
 
@@ -1180,13 +1213,31 @@ export default function Admin() {
             </div>
 
             {verificationEnabled && (
-              <div className="admin-info-box">
-                <p>При включенной системе все новые пользователи будут ожидать верификации.</p>
-                <p>
-                  Вы можете использовать одноразовые коды для автоматической верификации или проверять кодовые слова
-                  вручную для пользователей.
-                </p>
-              </div>
+              <>
+                <div className="admin-toggle-row">
+                  <label className="admin-toggle-switch">
+                    <input
+                      type="checkbox"
+                      checked={deleteCommentOnApprove}
+                      onChange={handleCommentDeletionToggle}
+                    />
+                    <span className="admin-toggle-slider"></span>
+                  </label>
+                  <span className="admin-label-text">
+                    {deleteCommentOnApprove
+                      ? 'Комментарий удаляется после подтверждения'
+                      : 'Комментарий сохраняется после подтверждения'}
+                  </span>
+                </div>
+
+                <div className="admin-info-box">
+                  <p>При включенной системе все новые пользователи будут ожидать верификации.</p>
+                  <p>
+                    Новый участник может оставить комментарий для владельца. Подтвердить заявку можно вручную
+                    или выдать одноразовый код для самостоятельной верификации.
+                  </p>
+                </div>
+              </>
             )}
           </div>
 
@@ -1206,6 +1257,14 @@ export default function Admin() {
                         <IconUser />
                       </span>
                       {u.login}
+                    </div>
+                    <div className="admin-pending-comment">
+                      <div className="admin-pending-comment-label">Комментарий</div>
+                      {u.registration_comment ? (
+                        <div className="admin-pending-comment-text">{u.registration_comment}</div>
+                      ) : (
+                        <div className="admin-pending-comment-empty">Без комментария</div>
+                      )}
                     </div>
                     <div className="admin-form-stack">
                       <div className="admin-actions-row">
