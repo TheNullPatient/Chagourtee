@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import type { Room, Message, User, MessageListResponse, MediaFile, MediaUploadSettings } from '../api';
-import { rooms as roomsApi, messages as messagesApi, auth as authApi, users, media } from '../api';
+import { rooms as roomsApi, messages as messagesApi, users, media } from '../api';
 import {
   getWebSocket,
   addMessageHandler,
@@ -19,6 +19,7 @@ import { playIncoming, playMention, playSent } from '../sounds';
 import { ensureNotificationPermission, showMessageNotification } from '../notifications';
 import { useUserListPanel } from '../UserListPanelContext';
 import { useToast } from '../ToastContext';
+import { useAuth } from '../AuthContext';
 import ConfirmModal from '../components/ConfirmModal';
 import InfoModal from '../components/InfoModal';
 import JSZip from 'jszip';
@@ -198,7 +199,7 @@ export default function Chat() {
   const [sendText, setSendText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
-  const [user, setUser] = useState<User | null>(null);
+  const { user } = useAuth();
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
     x: number;
@@ -231,6 +232,28 @@ export default function Chat() {
     maxStorageSize: null
   });
   const [uploadWarning, setUploadWarning] = useState<string | null>(null);
+  const mediaRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadMediaSettings = useCallback(() => {
+    return media
+      .settings()
+      .then((settings) => {
+        setMediaSettings(settings);
+        setStorageUsage({
+          totalBytes: settings.storage?.totalBytes ?? 0,
+          maxStorageSize: settings.storage?.maxStorageSize ?? null,
+        });
+      })
+      .catch((error) => console.error('Failed to load media settings:', error));
+  }, []);
+
+  const scheduleMediaSettingsRefresh = useCallback(() => {
+    if (mediaRefreshTimeoutRef.current) clearTimeout(mediaRefreshTimeoutRef.current);
+    mediaRefreshTimeoutRef.current = setTimeout(() => {
+      mediaRefreshTimeoutRef.current = null;
+      void loadMediaSettings();
+    }, 300);
+  }, [loadMediaSettings]);
 
   const isStorageFull = storageUsage.maxStorageSize !== null && storageUsage.maxStorageSize > 0
     ? storageUsage.totalBytes >= storageUsage.maxStorageSize
@@ -362,16 +385,7 @@ export default function Chat() {
 
   // Load current user info
   useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const userData = await authApi.me();
-        setUser(userData);
-        ensureNotificationPermission();
-      } catch (error) {
-        console.error('Failed to load user info:', error);
-      }
-    };
-    loadUser();
+    ensureNotificationPermission();
   }, []);
 
   const loadRooms = useCallback(async () => {
@@ -693,6 +707,13 @@ export default function Chat() {
             // Но это обрабатывается в ServerNameContext, так что можно пропустить
           }
           break;
+
+        case 'media_settings_updated':
+        case 'media_usage_changed':
+        case 'media_removed':
+          // Лимиты, квота или список файлов изменились — обновляем индикаторы
+          scheduleMediaSettingsRefresh();
+          break;
           
         default:
           // Не обрабатываем специфичные для комнаты события в глобальном обработчике
@@ -712,7 +733,7 @@ export default function Chat() {
       // Remove message handler when component unmounts
       removeMessageHandler(handleGlobalWsMessage);
     };
-  }, [roomId, user, navigate]); // Re-run when room or user changes so unread logic sees fresh state
+  }, [roomId, user, navigate, scheduleMediaSettingsRefresh]); // Re-run when room or user changes so unread logic sees fresh state
 
   // Handle WebSocket messages related to chat and room-specific events
   useEffect(() => {
@@ -1133,17 +1154,11 @@ export default function Chat() {
   }, [messages, roomId, loading]);
 
   useEffect(() => {
-    media
-      .settings()
-      .then((settings) => {
-        setMediaSettings(settings);
-        setStorageUsage({
-          totalBytes: settings.storage?.totalBytes ?? 0,
-          maxStorageSize: settings.storage?.maxStorageSize ?? null,
-        });
-      })
-      .catch((error) => console.error('Failed to load media settings:', error));
-  }, []);
+    void loadMediaSettings();
+    return () => {
+      if (mediaRefreshTimeoutRef.current) clearTimeout(mediaRefreshTimeoutRef.current);
+    };
+  }, [loadMediaSettings]);
 
   const isUploadEnabled = mediaSettings ? mediaSettings.uploadsEnabled : true;
   const handleMediaUploadInfoClick = useCallback((e: React.MouseEvent) => {

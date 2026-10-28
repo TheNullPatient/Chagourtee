@@ -423,6 +423,17 @@ async function mediaPlugin(fastify, options) {
         };
     }
 
+    // Drive live quota indicators without making every client poll.
+    function notifyMediaUsageChanged() {
+        if (typeof fastify.broadcastAll !== 'function') return;
+        const usage = getCurrentStorageUsage();
+        fastify.broadcastAll({
+            type: 'media_usage_changed',
+            totalBytes: usage.totalBytes,
+            filesCount: usage.filesCount,
+        });
+    }
+
     function removeMediaById(mediaId) {
         const media = db
             .prepare(
@@ -460,6 +471,7 @@ async function mediaPlugin(fastify, options) {
         if (typeof fastify.broadcastAll === 'function') {
             fastify.broadcastAll({ type: 'media_removed', mediaId: media.id });
         }
+        notifyMediaUsageChanged();
         return true;
     }
 
@@ -880,6 +892,9 @@ async function mediaPlugin(fastify, options) {
             }
 
             const usage = getCurrentStorageUsage();
+            if (typeof fastify.broadcastAll === 'function') {
+                fastify.broadcastAll({ type: 'media_settings_updated' });
+            }
             return {
                 maxFileSize: requestedMaxFileSize,
                 maxStorageSize: requestedMaxStorageSize,
@@ -1028,6 +1043,8 @@ async function mediaPlugin(fastify, options) {
                 uploadedBytes,
                 req.user.id
             );
+
+            notifyMediaUsageChanged();
 
             // Return file info
             reply.send({

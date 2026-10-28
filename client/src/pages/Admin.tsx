@@ -128,6 +128,35 @@ export default function Admin() {
     }
   }, [user, showToast]);
 
+  const applyMediaStorageSettings = useCallback((data: MediaStorageSettings) => {
+    setMediaStorageSettings(data);
+    // -1 or null means unlimited
+    if (data.maxFileSize === null || data.maxFileSize === -1) {
+      setUploadLimitMode('unlimited');
+      setUploadLimitInput('');
+    } else if (data.maxFileSize === 0) {
+      // 0 means uploads disabled
+      setUploadLimitMode('disabled');
+      setUploadLimitInput('');
+    } else {
+      // Specific limit set
+      setUploadLimitMode('custom');
+      setUploadLimitInput(String(data.maxFileSize));
+    }
+    // 0, -1, or null means unlimited for storage
+    if (data.maxStorageSize === null || data.maxStorageSize === 0 || data.maxStorageSize === -1) {
+      setStorageLimitUnlimited(true);
+      setStorageLimitInput('');
+    } else {
+      setStorageLimitUnlimited(false);
+      setStorageLimitInput(String(data.maxStorageSize));
+    }
+    setStorageCleanupStrategy(data.cleanupStrategy);
+    setOrphanCleanupEnabled(data.orphanCleanupEnabled);
+    setOrphanCleanupIntervalMinutes(String(data.orphanCleanupIntervalMinutes));
+    setOrphanCleanupGraceMinutes(String(data.orphanCleanupGraceMinutes));
+  }, []);
+
   useEffect(() => {
     setServerNameInput(rawName ?? '');
   }, [rawName]);
@@ -145,34 +174,7 @@ export default function Admin() {
         .catch(err => DEBUG_MODE && console.error('Error fetching verification settings:', err));
 
       media.getStorageSettings()
-        .then((data) => {
-          setMediaStorageSettings(data);
-          // -1 or null means unlimited
-          if (data.maxFileSize === null || data.maxFileSize === -1) {
-            setUploadLimitMode('unlimited');
-            setUploadLimitInput('');
-          } else if (data.maxFileSize === 0) {
-            // 0 means uploads disabled
-            setUploadLimitMode('disabled');
-            setUploadLimitInput('');
-          } else {
-            // Specific limit set
-            setUploadLimitMode('custom');
-            setUploadLimitInput(String(data.maxFileSize));
-          }
-          // 0, -1, or null means unlimited for storage
-          if (data.maxStorageSize === null || data.maxStorageSize === 0 || data.maxStorageSize === -1) {
-            setStorageLimitUnlimited(true);
-            setStorageLimitInput('');
-          } else {
-            setStorageLimitUnlimited(false);
-            setStorageLimitInput(String(data.maxStorageSize));
-          }
-          setStorageCleanupStrategy(data.cleanupStrategy);
-          setOrphanCleanupEnabled(data.orphanCleanupEnabled);
-          setOrphanCleanupIntervalMinutes(String(data.orphanCleanupIntervalMinutes));
-          setOrphanCleanupGraceMinutes(String(data.orphanCleanupGraceMinutes));
-        })
+        .then(applyMediaStorageSettings)
         .catch((err) => DEBUG_MODE && console.error('Error loading media storage settings:', err));
       
       // Load users
@@ -192,7 +194,7 @@ export default function Admin() {
     }
 
     load();
-  }, [user, load]);
+  }, [user, load, applyMediaStorageSettings]);
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 678px) and (max-width: 876px)');
@@ -312,6 +314,24 @@ export default function Admin() {
           }
           break;
 
+        case 'media_settings_updated':
+          if (user.role === 'owner') {
+            media.getStorageSettings()
+              .then(applyMediaStorageSettings)
+              .catch(() => {});
+          }
+          break;
+
+        case 'media_usage_changed':
+          if (user.role === 'owner' && typeof data.totalBytes === 'number') {
+            setMediaStorageSettings(prev => prev ? {
+              ...prev,
+              totalBytes: data.totalBytes,
+              filesCount: typeof data.filesCount === 'number' ? data.filesCount : prev.filesCount,
+            } : prev);
+          }
+          break;
+
         case 'user_role_changed':
         case 'user_updated':
         case 'user_verification_changed':
@@ -365,7 +385,7 @@ export default function Admin() {
     return () => {
       removeMessageHandler(handleWsMessage);
     };
-  }, [user, setRawNameLocal]);
+  }, [user, setRawNameLocal, applyMediaStorageSettings]);
 
   // Helper function for copying text to clipboard with fallback
   const copyToClipboard = async (text: string) => {

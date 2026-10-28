@@ -36,7 +36,10 @@ test('media uploads, downloads and quotas', async () => {
     request.user = user;
   });
   app.decorate('requireOwner', app.requireAuth);
-  app.decorate('broadcastAll', () => {});
+  const broadcastEvents = [];
+  app.decorate('broadcastAll', (payload) => {
+    broadcastEvents.push(payload);
+  });
 
   function setSettings({ maxFileSize, maxStorageSize, cleanupStrategy = 'block' }) {
     db.prepare(
@@ -121,6 +124,17 @@ test('media uploads, downloads and quotas', async () => {
       'upload returns an encrypted filename',
       uploaded.body && /\.enc$/.test(uploaded.body.encrypted_filename),
       JSON.stringify(uploaded.body)
+    );
+
+    const usageEvent = broadcastEvents.find(
+      (event) => event.type === 'media_usage_changed'
+    );
+    check(
+      'upload broadcasts live storage usage',
+      usageEvent &&
+        usageEvent.totalBytes === payload.length &&
+        usageEvent.filesCount === 1,
+      JSON.stringify(usageEvent)
     );
 
     const encryptedPath = path.join(workspace.mediaDir, uploaded.body.encrypted_filename);
