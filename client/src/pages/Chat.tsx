@@ -276,6 +276,9 @@ export default function Chat() {
   const [onlineUserIds, setOnlineUserIds] = useState<Set<number>>(() => new Set());
   const [mentionedMessages, setMentionedMessages] = useState<Set<number>>(new Set()); // Track messages where user is mentioned
   const [mentionedRooms, setMentionedRooms] = useState<Set<number>>(new Set()); // Track rooms where user is mentioned
+  // Mentions that arrived while the user was scrolled up in the current room.
+  // The floating button steps through them and clears the ones already visited.
+  const [unseenMentions, setUnseenMentions] = useState<Set<number>>(new Set());
   
   // State for media uploads
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -545,6 +548,11 @@ export default function Chat() {
         roomsApi.lock(leavingRoomId).catch(() => {});
       }
     };
+  }, [roomId]);
+
+  // Mentions tracked for the floating button belong to the room they came from.
+  useEffect(() => {
+    setUnseenMentions(new Set());
   }, [roomId]);
 
   useEffect(() => {
@@ -1026,6 +1034,17 @@ export default function Chat() {
                   
                   return newSet;
                 });
+
+                // If the user is scrolled up, the mention is out of sight:
+                // collect it for the floating "jump to mention" button.
+                if (!shouldAutoScrollRef.current) {
+                  setUnseenMentions(prev => {
+                    if (prev.has(data.message.id)) return prev;
+                    const next = new Set(prev);
+                    next.add(data.message.id);
+                    return next;
+                  });
+                }
               }
             }
 
@@ -1315,6 +1334,8 @@ export default function Chat() {
       // Reaching the bottom means the user has read everything, even if they
       // scrolled there manually instead of pressing the button.
       if (distanceToBottom < 40) {
+        // All mentions are behind the viewport now; the jump button is done.
+        setUnseenMentions(prev => (prev.size === 0 ? prev : new Set()));
         void markRoomAsReadRef.current();
       }
 
@@ -1422,9 +1443,41 @@ export default function Chat() {
     // Reset auto-scroll behavior when user manually scrolls to bottom
     shouldAutoScrollRef.current = true;
     setShowScrollButton(false);
+    // All mentions are behind the viewport now; the jump button is done.
+    setUnseenMentions(new Set());
     setTimeout(() => {
       void markRoomAsReadRef.current();
     }, 200);
+  };
+
+  // Jump to the first unseen mention in the current room. Used by the floating
+  // button that appears when a mention arrived while the user was scrolled up.
+  const jumpToNextMention = () => {
+    if (!roomId || unseenMentions.size === 0) return;
+
+    const firstId = [...unseenMentions].sort((a, b) => a - b)[0];
+    if (firstId === undefined) return;
+    const messageEl = document.querySelector(
+      `[data-message-id="${firstId}"]`
+    ) as HTMLElement | null;
+
+    if (messageEl) {
+      messageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      messageEl.classList.add('mention-jump-target');
+      setTimeout(() => messageEl.classList.remove('mention-jump-target'), 1500);
+    }
+
+    setUnseenMentions(prev => {
+      const next = new Set(prev);
+      next.delete(firstId);
+      return next;
+    });
+
+    // Auto-scroll resumes once we reach the bottom again; mark room as read
+    // after a short delay so the scroll lands first.
+    setTimeout(() => {
+      void markRoomAsReadRef.current();
+    }, 300);
   };
 
   // Follow new incoming messages when the user is already at the bottom.
@@ -2638,6 +2691,22 @@ export default function Chat() {
                   >
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <path d="M12 5v14M19 12l-7 7-7-7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                )}
+                {unseenMentions.size > 0 && (
+                  <button
+                    className="jump-to-mention-btn"
+                    onClick={jumpToNextMention}
+                    aria-label={`Перейти к ${unseenMentions.size} непрочитанным упоминаниям`}
+                    title={`Вас упомянули: ${unseenMentions.size}`}
+                  >
+                    <span className="mention-badge">{unseenMentions.size}</span>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <circle cx="9" cy="7" r="4" strokeWidth="2" />
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M16 3.13A4 4 0 0 1 12.5 3C13 3 13 3 13 3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </button>
                 )}
