@@ -133,11 +133,11 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 - [x] Implement scroll-to-original-message functionality when clicking quotes
 
 #### 5.2. Mention Notifications
-- [ ] Add indicator for unseen mentions when scrolled down
-- [ ] Create scroll-to-mention button positioned above the "scroll to bottom" button
-- [ ] Implement mention tracking and notification logic
-- [ ] Add visual indication of unread mentions
-- [ ] Remove mention notification after scrolling to or clicking on the button
+- [x] Add indicator for unseen mentions when scrolled down
+- [x] Create scroll-to-mention button positioned above the "scroll to bottom" button
+- [x] Implement mention tracking and notification logic
+- [x] Add visual indication of unread mentions
+- [x] Remove mention notification after scrolling to or clicking on the button
 
 #### 5.3. Message Reactions
 - [ ] Implement reaction system allowing customizable emojis per room
