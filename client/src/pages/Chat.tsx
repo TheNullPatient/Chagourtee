@@ -471,6 +471,8 @@ export default function Chat() {
   const activeRoomId = activeRoom?.id ?? null;
   const activeRoomLocked = Boolean(activeRoom?.locked);
   const activeRoomMissing = roomsLoaded && Boolean(roomId) && !activeRoom;
+  const typingLabel = formatTypingUsers(typingUsers);
+  const typingVerb = typingUsers.length === 1 ? 'печатает' : 'печатают';
   const canJoinRoom = roomsLoaded && activeRoomId !== null && !activeRoomLocked;
   const isPrivilegedUser = user?.role === 'owner' || user?.role === 'moderator';
   // Locking only makes sense for password-protected rooms the user is inside.
@@ -2671,22 +2673,52 @@ export default function Chat() {
                     );
                   })
                 )}
-                {formatTypingUsers(typingUsers) && (
-                  <div className="chat-typing-indicator">
-                    <Marquee animationDuration={8}>{formatTypingUsers(typingUsers)}</Marquee> печатает…
+                {typingLabel && (
+                  <div
+                    className="chat-typing-indicator"
+                    role="status"
+                    aria-live="polite"
+                    title={`${typingLabel} ${typingVerb}`}
+                  >
+                    <span className="chat-typing-icon" aria-hidden="true">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                    <span className="chat-typing-text">
+                      <span className="chat-typing-name">{typingLabel}</span>
+                      <span className="chat-typing-verb">{typingVerb}</span>
+                    </span>
+                    <span className="typing-dots" aria-hidden="true">
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                    </span>
                   </div>
                 )}
                 <div ref={messagesEndRef} />
                 {/* Floating scroll to bottom button */}
                 {showScrollButton && (
                   <button 
-                    className="scroll-to-bottom-btn"
+                    className={`scroll-to-bottom-btn${typingLabel ? ' has-typing' : ''}`}
                     onClick={scrollToBottom}
-                    aria-label="Прокрутить к последнему сообщению"
+                    aria-label={
+                      typingLabel
+                        ? `${typingLabel} ${typingVerb} — прокрутить вниз`
+                        : 'Прокрутить к последнему сообщению'
+                    }
+                    title={typingLabel ? `${typingLabel} ${typingVerb}` : undefined}
                   >
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <path d="M12 5v14M19 12l-7 7-7-7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
+                    {typingLabel && (
+                      <span className="scroll-typing-badge" aria-hidden="true">
+                        <span className="typing-dot" />
+                        <span className="typing-dot" />
+                        <span className="typing-dot" />
+                      </span>
+                    )}
                   </button>
                 )}
                 {unseenMentions.size > 0 && (

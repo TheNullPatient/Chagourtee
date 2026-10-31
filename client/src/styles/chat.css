@@ -278,9 +278,102 @@ button.chat-room-link:hover {
 }
 
 .chat-typing-indicator {
-  font-size: 0.9rem;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: min(100%, 30rem);
+  padding: 0.4rem 0.7rem 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 14px 14px 14px 4px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
   color: var(--text-muted);
-  font-style: italic;
+  font-size: 0.82rem;
+  font-style: normal;
+  animation: typing-indicator-in 0.2s ease-out both;
+}
+
+.chat-typing-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.chat-typing-icon svg {
+  display: block;
+}
+
+.chat-typing-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chat-typing-name {
+  max-width: 14rem;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chat-typing-verb {
+  white-space: nowrap;
+}
+
+.typing-dots {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  height: 1em;
+  color: var(--accent);
+}
+
+.typing-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: typing-dot-bounce 1.15s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes typing-dot-bounce {
+  0%,
+  60%,
+  100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes typing-indicator-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .chat-form-textarea {
@@ -1010,6 +1103,54 @@ button.chat-room-link:hover {
   box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
   padding: 0;
+  overflow: visible;
+}
+
+.scroll-to-bottom-btn:hover {
+  background: var(--accent-hover);
+  transform: scale(1.05);
+}
+
+.scroll-to-bottom-btn.has-typing {
+  animation: scroll-btn-typing-pulse 2s ease-out infinite;
+}
+
+.scroll-typing-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 24px;
+  height: 18px;
+  padding: 0 6px;
+  border: 2px solid var(--accent);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+  color: var(--accent);
+  animation: typing-indicator-in 0.2s ease-out both;
+}
+
+.scroll-typing-badge .typing-dot {
+  width: 3px;
+  height: 3px;
+}
+
+@keyframes scroll-btn-typing-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55);
+  }
+
+  70% {
+    box-shadow: 0 0 0 10px rgba(var(--accent-rgb), 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
+  }
 }
 
 @media (max-width: 678px) {
@@ -1018,6 +1159,14 @@ button.chat-room-link:hover {
     right: 15px;
     width: 44px;
     height: 44px;
+  }
+
+  .scroll-typing-badge {
+    top: -3px;
+    right: -3px;
+    min-width: 22px;
+    height: 17px;
+    padding: 0 5px;
   }
 }
 
