@@ -1,6 +1,15 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+// The dev server proxies API and WebSocket traffic to the backend. Set
+// SERVER_ORIGIN=https://127.0.0.1:3000 when the backend runs with
+// SECURE_CONNECTION=true and therefore speaks HTTPS/WSS.
+const serverOrigin =
+  process.env.CHAGOURTEE_SERVER_ORIGIN ||
+  process.env.SERVER_ORIGIN ||
+  'http://127.0.0.1:3000';
+const wsOrigin = serverOrigin.replace(/^http/i, 'ws');
+
 // Create a custom plugin to handle WebSocket errors
 const handleWebSocketErrors = () => ({
   name: 'handle-websocket-errors',
@@ -27,14 +36,15 @@ export default defineConfig({
     port: 5173,
     allowedHosts: true, // Use boolean true instead of string 'all'
     proxy: {
-      '/api': { 
-        target: 'http://127.0.0.1:3000', 
+      '/api': {
+        target: serverOrigin,
         changeOrigin: true,
         secure: false // Accept self-signed certificates if needed
       },
-      '/ws': { 
-        target: 'ws://127.0.0.1:3000', 
+      '/ws': {
+        target: wsOrigin,
         ws: true,
+        secure: false,
         changeOrigin: true,
       },
     },

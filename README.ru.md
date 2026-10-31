@@ -168,6 +168,46 @@ PORT=3000 node src/index.js
 - `CHAGOURTEE_BOOTSTRAP_SECRET` – секрет для создания первого владельца (см. выше)
 - `CHAGOURTEE_MAX_FILE_SIZE` – максимальный размер файла для загрузки в байтах (по умолчанию 52428800 = 50MB)
 - `CHAGOURTEE_MEDIA_ENCRYPTION_KEY` – ключ шифрования для медиафайлов (32 байта для AES-256)
+- `SECURE_CONNECTION` – `true` включает HTTPS и WSS для API-сервера (по умолчанию `false`)
+- `SSL_KEY_PATH` / `SSL_CERT_PATH` – пути к ключу и сертификату (абсолютные или относительно корня проекта)
+- `SSL_CA_PATH` – необязательная цепочка промежуточных сертификатов
+- `HTTP_REDIRECT_PORT` – порт HTTP-редиректа на HTTPS (по умолчанию HTTPS-порт + 1)
+- `HTTP_REDIRECT_HOST` – хост HTTP-редиректа (по умолчанию `HOST`)
+
+### HTTPS/WSS
+
+Чтобы включить защищённое соединение, укажите сертификаты и включите режим:
+
+```bash
+SECURE_CONNECTION=true
+SSL_KEY_PATH=./certs/privkey.pem
+SSL_CERT_PATH=./certs/fullchain.pem
+# SSL_CA_PATH=./certs/chain.pem
+# HTTP_REDIRECT_PORT=80   # по умолчанию HTTPS-порт + 1
+```
+
+- `PORT` остаётся портом приложения: в этом режиме он обслуживает HTTPS.
+- WebSocket автоматически становится WSS — клиент выбирает `ws` или `wss` по протоколу страницы, отдельная настройка не нужна.
+- Второй HTTP-сервер на `HTTP_REDIRECT_PORT` отвечает постоянным редиректом `308` на HTTPS.
+- Cookie сессии получает флаг `Secure` автоматически (`CHAGOURTEE_COOKIE_SECURE=auto`).
+
+Для локальной проверки можно выпустить самоподписанный сертификат:
+
+```bash
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout certs/privkey.pem -out certs/fullchain.pem -days 365 \
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+```
+
+В режиме разработки Vite проксирует API и WebSocket на бэкенд, поэтому укажите его протокол:
+
+```bash
+SERVER_ORIGIN=https://127.0.0.1:3000 npm run dev
+```
+
+В продакшене клиент и API должны открываться по HTTPS с одного origin (обычно через обратный прокси: nginx, Caddy или Cloudflare Tunnel). HTTP-редирект защищает только порт API-сервера, но не порт клиентской статики.
 
 ### Логирование
 

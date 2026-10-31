@@ -171,11 +171,11 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 ### 7. HTTPS/WSS and Tunneling
 
 #### 7.1. Secure Connections
-- [ ] Add SECURE_CONNECTION environment variable support in [index.js](./server/src/index.js)
-- [ ] Implement HTTPS server alongside HTTP server
-- [ ] Redirect HTTP traffic to HTTPS when SECURE_CONNECTION=true
-- [ ] Implement WSS instead of WS when HTTPS is enabled in [websocket.ts](./client/src/websocket.ts)
-- [ ] Add certificate and key path configuration in .env
+- [x] Add SECURE_CONNECTION environment variable support in [index.js](./server/src/index.js) — реализовано в [secureConnection.js](./server/src/secureConnection.js)
+- [x] Implement HTTPS server alongside HTTP server — HTTPS-сервер Fastify + отдельный HTTP-сервер редиректа
+- [x] Redirect HTTP traffic to HTTPS when SECURE_CONNECTION=true — постоянный `308` на `HTTP_REDIRECT_PORT`
+- [x] Implement WSS instead of WS when HTTPS is enabled in [websocket.ts](./client/src/websocket.ts) — клиент выбирает `wss` по `location.protocol`, `ws` автоматически работает через HTTPS-сервер
+- [x] Add certificate and key path configuration in .env — `SSL_KEY_PATH`, `SSL_CERT_PATH`, `SSL_CA_PATH`
 
 #### 7.2. Cloudflare Tunnel Support
 - [ ] Add built-in support for Cloudflare Tunnel
@@ -188,7 +188,7 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 ### High Priority (Required for v0.4.0-alpha)
 1. Enhanced File Handling (especially media size validation and error handling) — ✅ **Done**
 2. Code Quality Improvements (replace alerts and centralize styles) — ✅ **Done** (alerts и confirm заменены на Toast/ConfirmModal, CSS разбит на модули)
-3. Basic HTTPS/WSS implementation
+3. Basic HTTPS/WSS implementation — ✅ **Done**
 4. Message Replies functionality — ✅ **Done**
 5. Room access levels (at least basic implementation) — ✅ **Done** (Public / Closed / Private / Restricted)
 
@@ -234,4 +234,4 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 - [ ] UI tests for new client features
 - [ ] Load testing for file upload functionality
 - [ ] Security testing for permission boundaries
-- [ ] Compatibility testing for HTTPS/WSS implementation
+- [x] Compatibility testing for HTTPS/WSS implementation — покрыто [secure-connection.test.js](./server/test/secure-connection.test.js)

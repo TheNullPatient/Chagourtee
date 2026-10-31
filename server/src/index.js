@@ -9,6 +9,10 @@ const { hashPassword, verifyPassword, SESSION_TTL_MS, createSessionId } = requir
 const authPlugin = require('./auth').plugin;
 const { authRoutes, addAuthUtils, getSessionCookieOptions } = require('./auth');
 const { logger } = require('../logger');
+const {
+  createHttpRedirectServer,
+  getSecureConnectionConfig,
+} = require('./secureConnection');
 
 const SESSION_COOKIE = 'chagourtee_sid';
 
@@ -18,9 +22,18 @@ const { getVersionInfo } = require('./version');
 // Import media plugin
 const mediaPlugin = require('./media');
 
+let secureConnection;
+try {
+  secureConnection = getSecureConnectionConfig();
+} catch (error) {
+  logger.error(`Secure connection configuration error: ${error.message}`);
+  process.exit(1);
+}
+
 // Initialize Fastify server with request logging via custom hook
 const server = fastify({
-  logger: false
+  logger: false,
+  ...(secureConnection.enabled ? { https: secureConnection.tls } : {}),
 });
 
 // Track request start time for duration logging
@@ -278,9 +291,35 @@ async function run() {
   });
 
   // Run the server
+  let httpRedirectServer = null;
   try {
     await server.listen({ port: process.env.PORT || 3000, host: process.env.HOST || '0.0.0.0' });
-    logger.info(`Server listening on port ${server.server.address().port}`);
+    const actualPort = server.server.address().port;
+    const protocol = secureConnection.enabled ? 'https' : 'http';
+    logger.info(`Server listening on ${protocol} port ${actualPort}`);
+
+    if (secureConnection.enabled) {
+      const redirectPort = secureConnection.redirectPort ?? actualPort + 1;
+      if (redirectPort > 65535) {
+        logger.warn(
+          `HTTP-to-HTTPS redirect is disabled: redirect port ${redirectPort} is out of range. Set HTTP_REDIRECT_PORT explicitly.`
+        );
+      } else {
+        httpRedirectServer = createHttpRedirectServer({ httpsPort: actualPort });
+        httpRedirectServer.on('error', (error) => {
+          logger.warn(
+            `HTTP-to-HTTPS redirect server on port ${redirectPort} failed: ${error.message}`
+          );
+        });
+        httpRedirectServer.listen(redirectPort, secureConnection.redirectHost, () => {
+          logger.info(
+            `HTTP redirect listening on port ${redirectPort} -> ${protocol}://<host>:${actualPort}`
+          );
+        });
+      }
+      logger.info(`TLS certificate: ${secureConnection.certificates.cert}`);
+    }
+
     logger.info(`Log level: ${logger.getLogLevel()}`);
     if (process.env.CHAGOURTEE_LOG_TO_FILE === 'true') {
       logger.info(`Logging to file: ${logger.getLogFile()}`);
@@ -307,6 +346,9 @@ async function run() {
       logger.info('Server closed successfully');
     } catch (e) {
       logger.error('Error closing server:', e);
+    }
+    if (httpRedirectServer?.listening) {
+      await new Promise((resolve) => httpRedirectServer.close(() => resolve()));
     }
     logger.close();
     process.exit(0);

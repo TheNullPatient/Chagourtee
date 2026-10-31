@@ -89,7 +89,7 @@ function getFreePort() {
 /**
  * Starts the real server entry point against the workspace database.
  */
-async function startServer(workspace, { extraEnv = {} } = {}) {
+async function startServer(workspace, { extraEnv = {}, secure = false } = {}) {
   const port = await getFreePort();
   const child = spawn(process.execPath, [path.join(SERVER_ROOT, 'src', 'index.js')], {
     cwd: ROOT,
@@ -116,7 +116,7 @@ async function startServer(workspace, { extraEnv = {} } = {}) {
     output += chunk.toString();
   });
 
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = `${secure ? 'https' : 'http'}://127.0.0.1:${port}`;
 
   const exited = new Promise((resolve) => {
     child.once('exit', (code, signal) => resolve({ code, signal }));
@@ -128,8 +128,8 @@ async function startServer(workspace, { extraEnv = {} } = {}) {
       throw new Error(`Server exited before becoming ready:\n${output}`);
     }
     try {
-      const response = await fetch(`${baseUrl}/api/version`);
-      if (response.ok) break;
+      const status = await requestStatus(`${baseUrl}/api/version`, secure);
+      if (status === 200) break;
     } catch {
       // not listening yet
     }
@@ -151,6 +151,26 @@ async function startServer(workspace, { extraEnv = {} } = {}) {
   }
 
   return { child, baseUrl, port, stop, getOutput: () => output };
+}
+
+/**
+ * Minimal HTTP(S) request used for readiness polling. The HTTPS variant skips
+ * certificate verification because tests use a throwaway self-signed cert.
+ */
+function requestStatus(url, secure = false) {
+  const transport = secure ? require('node:https') : require('node:http');
+  return new Promise((resolve, reject) => {
+    const request = transport.get(
+      url,
+      secure ? { rejectUnauthorized: false } : {},
+      (response) => {
+        response.resume();
+        response.on('end', () => resolve(response.statusCode));
+      }
+    );
+    request.on('error', reject);
+    request.setTimeout(2000, () => request.destroy(new Error('request timeout')));
+  });
 }
 
 /**

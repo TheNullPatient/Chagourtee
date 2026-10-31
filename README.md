@@ -168,6 +168,46 @@ Recommended environment variables (or `.env` file in `server/`):
 - `CHAGOURTEE_BOOTSTRAP_SECRET` – secret for creating the first owner (see above)
 - `CHAGOURTEE_MAX_FILE_SIZE` – maximum file size for upload in bytes (default 52428800 = 50MB)
 - `CHAGOURTEE_MEDIA_ENCRYPTION_KEY` – encryption key for media files (32 bytes for AES-256)
+- `SECURE_CONNECTION` – `true` enables HTTPS and WSS for the API server (default `false`)
+- `SSL_KEY_PATH` / `SSL_CERT_PATH` – paths to the private key and certificate (absolute or relative to the project root)
+- `SSL_CA_PATH` – optional intermediate certificate chain
+- `HTTP_REDIRECT_PORT` – port for the HTTP-to-HTTPS redirect (defaults to the HTTPS port + 1)
+- `HTTP_REDIRECT_HOST` – host for the HTTP redirect (defaults to `HOST`)
+
+### HTTPS/WSS
+
+To enable a secure connection, point the server at a certificate and turn the mode on:
+
+```bash
+SECURE_CONNECTION=true
+SSL_KEY_PATH=./certs/privkey.pem
+SSL_CERT_PATH=./certs/fullchain.pem
+# SSL_CA_PATH=./certs/chain.pem
+# HTTP_REDIRECT_PORT=80   # defaults to the HTTPS port + 1
+```
+
+- `PORT` remains the application port; in this mode it serves HTTPS.
+- WebSocket automatically becomes WSS — the client picks `ws` or `wss` from the page protocol, so no extra setting is needed.
+- A second plain HTTP server on `HTTP_REDIRECT_PORT` answers every request with a permanent `308` redirect to HTTPS.
+- The session cookie receives the `Secure` flag automatically (`CHAGOURTEE_COOKIE_SECURE=auto`).
+
+For local testing you can generate a self-signed certificate:
+
+```bash
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout certs/privkey.pem -out certs/fullchain.pem -days 365 \
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+```
+
+In development, Vite proxies API and WebSocket traffic to the backend, so tell it which protocol to use:
+
+```bash
+SERVER_ORIGIN=https://127.0.0.1:3000 npm run dev
+```
+
+In production the client and API should be served over HTTPS from the same origin (usually via a reverse proxy: nginx, Caddy or Cloudflare Tunnel). The HTTP redirect covers the API server port only, not a separately served client.
 
 ### Logging
 
