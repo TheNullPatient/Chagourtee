@@ -189,7 +189,7 @@ SSL_CERT_PATH=./certs/fullchain.pem
 - `PORT` остаётся портом приложения: в этом режиме он обслуживает HTTPS.
 - WebSocket автоматически становится WSS — клиент выбирает `ws` или `wss` по протоколу страницы, отдельная настройка не нужна.
 - Второй HTTP-сервер на `HTTP_REDIRECT_PORT` отвечает постоянным редиректом `308` на HTTPS.
-- Cookie сессии получает флаг `Secure` автоматически (`CHAGOURTEE_COOKIE_SECURE=auto`).
+- Cookie сессии получает флаг `Secure` автоматически (`CHAGOURTEE_COOKIE_SECURE=auto`). Не выставляйте `CHAGOURTEE_COOKIE_SECURE=false` при работе по HTTPS — иначе cookie будет передаваться без флага `Secure`.
 
 Для локальной проверки можно выпустить самоподписанный сертификат:
 

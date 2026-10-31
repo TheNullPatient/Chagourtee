@@ -189,7 +189,7 @@ SSL_CERT_PATH=./certs/fullchain.pem
 - `PORT` remains the application port; in this mode it serves HTTPS.
 - WebSocket automatically becomes WSS — the client picks `ws` or `wss` from the page protocol, so no extra setting is needed.
 - A second plain HTTP server on `HTTP_REDIRECT_PORT` answers every request with a permanent `308` redirect to HTTPS.
-- The session cookie receives the `Secure` flag automatically (`CHAGOURTEE_COOKIE_SECURE=auto`).
+- The session cookie receives the `Secure` flag automatically (`CHAGOURTEE_COOKIE_SECURE=auto`). Do not set `CHAGOURTEE_COOKIE_SECURE=false` in an HTTPS deployment — otherwise the cookie is sent without the `Secure` flag.
 
 For local testing you can generate a self-signed certificate:
 

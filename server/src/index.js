@@ -30,6 +30,15 @@ try {
   process.exit(1);
 }
 
+if (
+  secureConnection.enabled &&
+  String(process.env.CHAGOURTEE_COOKIE_SECURE || '').trim().toLowerCase() === 'false'
+) {
+  logger.warn(
+    'SECURE_CONNECTION is enabled, but CHAGOURTEE_COOKIE_SECURE=false: session cookies will not receive the Secure flag. Use "auto" or remove the override for HTTPS deployments.'
+  );
+}
+
 // Initialize Fastify server with request logging via custom hook
 const server = fastify({
   logger: false,
