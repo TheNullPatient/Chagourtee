@@ -262,7 +262,6 @@ export default function Chat() {
   const [selectedMessages, setSelectedMessages] = useState<number[]>([]);
   const [editingMessage, setEditingMessage] = useState<{id: number, body: string, originalBody: string, media?: any[], mediaPosition?: string} | null>(null);
   const [originalMediaOnEditStart, setOriginalMediaOnEditStart] = useState<any[] | null>(null);  // Track original media when editing starts
-  const typingIndicatorRef = useRef<HTMLDivElement>(null);
   const typingTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const hasConnectedRef = useRef(isWebSocketConnected());
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -338,6 +337,7 @@ export default function Chat() {
   
   // Track whether user wants to stay at bottom
   const shouldAutoScrollRef = useRef(true);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const lastReadMessageIdRef = useRef<Record<number, number>>({});
   const markRoomAsReadRef = useRef<() => void>(() => {});
   const skipAutoScrollRef = useRef(false);
@@ -479,9 +479,9 @@ export default function Chat() {
 
   // Function to update scroll button visibility based on scroll position
   const updateScrollButtonVisibility = useCallback(() => {
-    const messagesContainer = document.querySelector('.chat-messages-wrap');
+    const messagesContainer = messagesContainerRef.current;
     if (messagesContainer) {
-      const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
+      const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
       const distanceToBottom = scrollHeight - scrollTop - clientHeight;
 
       // Show button only when:
@@ -515,17 +515,8 @@ export default function Chat() {
       
       // Update scroll button visibility after messages are loaded and rendered
       setTimeout(updateScrollButtonVisibility, 0);
-      
-      // After loading messages, check if we should preserve scroll position or scroll to bottom
-      setTimeout(() => {
-        const messagesContainer = document.querySelector('.chat-messages-wrap');
-        if (messagesContainer && roomId && scrollPositions.current[roomId] !== undefined) {
-          // Restore the saved scroll position for this room
-          messagesContainer.scrollTop = scrollPositions.current[roomId];
-        }
-      }, 0);
     }
-  }, [updateScrollButtonVisibility, roomId]);
+  }, [updateScrollButtonVisibility]);
 
   useEffect(() => {
     // Access may have changed while the user was elsewhere, and a password
@@ -753,9 +744,9 @@ export default function Chat() {
   // When messages change, if user is near the bottom, mark them as read
   useEffect(() => {
     if (!roomId || messages.length === 0) return;
-    const messagesContainer = document.querySelector('.chat-messages-wrap');
+    const messagesContainer = messagesContainerRef.current;
     if (!messagesContainer) return;
-    const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
     const distanceToBottom = scrollHeight - scrollTop - clientHeight;
     if (distanceToBottom < 40) {
       void markRoomAsRead();
@@ -1308,70 +1299,54 @@ export default function Chat() {
     }
   }
 
-  // Handle scroll events to show/hide scroll-to-bottom button
-  useEffect(() => {
-    const messagesContainer = document.querySelector('.chat-messages-wrap');
-    
-    if (!messagesContainer) {
-      // If no container exists (no room selected), hide the button
-      setShowScrollButton(false);
-      return;
+  // Track the user's position inside the message feed. This is attached with
+  // the onScroll prop because the feed is unmounted while a room is loading,
+  // and a listener added in an effect would be lost when it remounts.
+  const handleMessagesScroll = useCallback(() => {
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
+    const distanceToBottom = scrollHeight - scrollTop - clientHeight;
+
+    // Update auto-scroll ref to determine if we should auto-scroll
+    shouldAutoScrollRef.current = distanceToBottom < 100; // Consider "near bottom" if within 100px
+
+    // Show button only when:
+    // 1. Distance to bottom is greater than 100px (user scrolled up significantly)
+    // 2. Container is actually scrollable (content is taller than container)
+    setShowScrollButton(distanceToBottom > 100 && scrollHeight > clientHeight);
+
+    // Reaching the bottom means the user has read everything, even if they
+    // scrolled there manually instead of pressing the button.
+    if (distanceToBottom < 40) {
+      // All mentions are behind the viewport now; the jump button is done.
+      setUnseenMentions(prev => (prev.size === 0 ? prev : new Set()));
+      void markRoomAsReadRef.current();
     }
 
-    const handleScroll = () => {
-      // Check if user is near the bottom of the chat
-      const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
-      const distanceToBottom = scrollHeight - scrollTop - clientHeight;
-      
-      // Update auto-scroll ref to determine if we should auto-scroll
-      shouldAutoScrollRef.current = distanceToBottom < 100; // Consider "near bottom" if within 100px
-      
-      // Show button only when:
-      // 1. Distance to bottom is greater than 100px (user scrolled up significantly)
-      // 2. Container is actually scrollable (content is taller than container)
-      setShowScrollButton(distanceToBottom > 100 && scrollHeight > clientHeight);
+    // Store the current scroll position for the room
+    if (roomId) {
+      scrollPositions.current[roomId] = scrollTop;
+    }
+  }, [roomId]);
 
-      // Reaching the bottom means the user has read everything, even if they
-      // scrolled there manually instead of pressing the button.
-      if (distanceToBottom < 40) {
-        // All mentions are behind the viewport now; the jump button is done.
-        setUnseenMentions(prev => (prev.size === 0 ? prev : new Set()));
-        void markRoomAsReadRef.current();
-      }
+  // Restore the saved position (or jump to the newest message) once the feed
+  // is actually on screen. The feed only mounts after the room list has loaded
+  // and the messages request has finished, so waiting for `loading` matters.
+  useEffect(() => {
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer || loading || !roomsLoaded) return;
 
-      // Store the current scroll position for the room
-      if (roomId) {
-        scrollPositions.current[roomId] = scrollTop;
-      }
-    };
+    const savedPosition = roomId ? scrollPositions.current[roomId] : undefined;
+    messagesContainer.scrollTop =
+      savedPosition !== undefined ? savedPosition : messagesContainer.scrollHeight;
 
-    messagesContainer.addEventListener('scroll', handleScroll);
-    
-    // Restore scroll position if we have one for this room
-    // Delay slightly to ensure DOM has rendered
-    setTimeout(() => {
-      if (roomId && scrollPositions.current[roomId] !== undefined) {
-        messagesContainer.scrollTop = scrollPositions.current[roomId];
-        
-        // Update the auto scroll ref and button visibility based on restored position
-        const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
-        const distanceToBottom = scrollHeight - scrollTop - clientHeight;
-        shouldAutoScrollRef.current = distanceToBottom < 100;
-        setShowScrollButton(distanceToBottom > 100 && scrollHeight > clientHeight);
-      } else {
-        // If no saved position, ensure we're at the bottom and update accordingly
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        const { scrollTop, scrollHeight, clientHeight } = messagesContainer as HTMLElement;
-        const distanceToBottom = scrollHeight - scrollTop - clientHeight;
-        shouldAutoScrollRef.current = distanceToBottom < 100;
-        setShowScrollButton(distanceToBottom > 100 && scrollHeight > clientHeight);
-      }
-    }, 0);
-    
-    return () => {
-      messagesContainer.removeEventListener('scroll', handleScroll);
-    };
-  }, [roomId]); // Add roomId as a dependency so the effect re-runs when room changes
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
+    const distanceToBottom = scrollHeight - scrollTop - clientHeight;
+    shouldAutoScrollRef.current = distanceToBottom < 100;
+    setShowScrollButton(distanceToBottom > 100 && scrollHeight > clientHeight);
+  }, [roomId, roomsLoaded, loading, activeRoomId, activeRoomLocked]);
 
   // Function to adjust the position of the scroll-to-bottom button based on panel visibility
   const adjustScrollButtonPosition = useCallback(() => {
@@ -1439,7 +1414,15 @@ export default function Chat() {
 
   // Scroll to bottom function
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const messagesContainer = messagesContainerRef.current;
+    if (messagesContainer) {
+      messagesContainer.scrollTo({
+        top: messagesContainer.scrollHeight,
+        behavior: 'smooth',
+      });
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
     // Reset auto-scroll behavior when user manually scrolls to bottom
     shouldAutoScrollRef.current = true;
     setShowScrollButton(false);
@@ -1507,7 +1490,7 @@ export default function Chat() {
       return;
     }
 
-    const messagesContainer = document.querySelector('.chat-messages-wrap') as HTMLElement | null;
+    const messagesContainer = messagesContainerRef.current;
     if (!messagesContainer) return;
 
     // Jump straight to the newest message; smooth scrolling lags behind and
@@ -1545,11 +1528,21 @@ export default function Chat() {
     [mediaSettings, isStorageFull]
   );
 
-  // Scroll to typing indicator when someone is typing, but only if user was at the bottom
+  // Keep the typing indicator in view, but never yank the feed when the user
+  // is reading older messages.
   useEffect(() => {
-    if (typingUsers.length > 0 && typingIndicatorRef.current && shouldAutoScrollRef.current) {
-      typingIndicatorRef.current.scrollIntoView({ behavior: 'smooth' });
+    const messagesContainer = messagesContainerRef.current;
+    if (
+      typingUsers.length === 0 ||
+      !messagesContainer ||
+      !shouldAutoScrollRef.current
+    ) {
+      return;
     }
+    messagesContainer.scrollTo({
+      top: messagesContainer.scrollHeight,
+      behavior: 'smooth',
+    });
   }, [typingUsers]);
 
   // Function to handle file selection
@@ -2524,7 +2517,9 @@ export default function Chat() {
                 )}
               </div>
               <div 
+                ref={messagesContainerRef}
                 className={`chat-messages-wrap ${isDragOver ? 'drag-over' : ''}`}
+                onScroll={handleMessagesScroll}
                 onDragEnter={handleDragEnter}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -2677,7 +2672,7 @@ export default function Chat() {
                   })
                 )}
                 {formatTypingUsers(typingUsers) && (
-                  <div ref={typingIndicatorRef} className="chat-typing-indicator">
+                  <div className="chat-typing-indicator">
                     <Marquee animationDuration={8}>{formatTypingUsers(typingUsers)}</Marquee> печатает…
                   </div>
                 )}
