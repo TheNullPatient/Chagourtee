@@ -3,6 +3,7 @@ dist
 *.db
 data/
 .env
+certs/
 *.log
 .DS_Store
 .lingma
