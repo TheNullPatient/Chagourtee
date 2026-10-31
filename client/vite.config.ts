@@ -39,7 +39,11 @@ export default defineConfig({
       '/api': {
         target: serverOrigin,
         changeOrigin: true,
-        secure: false // Accept self-signed certificates if needed
+        secure: false, // Accept self-signed certificates if needed
+        // Forward the browser-facing protocol. Without this the backend
+        // always sees HTTPS (because the proxy talks to it over TLS) and marks
+        // cookies Secure even when the dev page itself is served over HTTP.
+        xfwd: true,
       },
       '/ws': {
         target: wsOrigin,
