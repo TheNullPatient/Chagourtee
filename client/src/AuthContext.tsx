@@ -68,6 +68,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         }
         break;
+
+      case 'user_permissions_changed':
+        if (user && Number(data.userId) === Number(user.id) && Array.isArray(data.permissions)) {
+          setUser(prevUser =>
+            prevUser ? { ...prevUser, permissions: data.permissions } : prevUser
+          );
+        }
+        break;
         
       case 'verification_settings_updated':
         // We could handle this if needed, but typically settings changes

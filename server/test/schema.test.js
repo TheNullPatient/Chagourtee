@@ -136,6 +136,7 @@ test('update-schema migrates an outdated database in place', () => {
       'room_members',
       'room_unlocks',
       'message_reactions',
+      'user_permissions',
     ]) {
       check(`creates the ${table} table`, state.tables.includes(table));
     }
@@ -188,6 +189,10 @@ test('update-schema migrates an outdated database in place', () => {
       'creates the reaction indexes',
       state.indexes.includes('idx_message_reactions_message_id') &&
         state.indexes.includes('idx_message_reactions_user_id')
+    );
+    check(
+      'creates the permission lookup index',
+      state.indexes.includes('idx_user_permissions_user_id')
     );
     check(
       'creates the verification code lookup index',

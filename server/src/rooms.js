@@ -131,7 +131,7 @@ module.exports = function (fastify) {
   });
 
   fastify.post('/api/rooms', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('create_rooms')],
   }, async (request, reply) => {
     const { name, accessLevel, password, memberIds, reactionEmojis } = request.body || {};
     if (!name || !String(name).trim()) {
@@ -224,7 +224,7 @@ module.exports = function (fastify) {
   });
 
   fastify.patch('/api/rooms/:id', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('edit_rooms')],
   }, async (request, reply) => {
     const id = Number(request.params.id);
     const { name, accessLevel, password, memberIds, reactionEmojis } = request.body || {};
@@ -348,7 +348,7 @@ module.exports = function (fastify) {
   });
 
   fastify.get('/api/rooms/:id/members', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('edit_rooms')],
   }, async (request, reply) => {
     const id = Number(request.params.id);
     const room = getRoom(db, id);
@@ -357,7 +357,7 @@ module.exports = function (fastify) {
   });
 
   fastify.put('/api/rooms/:id/members', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('edit_rooms')],
   }, async (request, reply) => {
     const id = Number(request.params.id);
     const { memberIds } = request.body || {};
@@ -478,7 +478,7 @@ module.exports = function (fastify) {
   });
 
   fastify.delete('/api/rooms/:id', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('delete_rooms')],
   }, async (request, reply) => {
     const id = Number(request.params.id);
     

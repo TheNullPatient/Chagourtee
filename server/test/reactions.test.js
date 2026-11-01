@@ -19,6 +19,7 @@ const { getDb } = require('../src/db');
 const messagesPlugin = require('../src/messages');
 const roomsPlugin = require('../src/rooms');
 const { DEFAULT_REACTION_EMOJIS, serializeReactionEmojis } = require('../src/reactions');
+const { hasPermission } = require('../src/permissions');
 
 test('message reactions are grouped, toggled and scoped to a room palette', async () => {
   const { check, verify } = createChecker();
@@ -72,6 +73,16 @@ test('message reactions are grouped, toggled and scoped to a room palette', asyn
   );
   app.decorate('broadcastRoomNotification', () => {});
   app.decorate('broadcastAll', () => {});
+  app.decorate('requirePermission', (permission) => async (request, reply) => {
+    const id = Number(request.headers['x-test-user']);
+    const user = id ? app.getUser(id) : null;
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+    if (!hasPermission(db, user, permission)) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    request.session = { userId: id };
+    request.user = user;
+  });
   app.decorate('requireOwner', async (request, reply) => {
     const user = app.getUser(request.session?.userId);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });

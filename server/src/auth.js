@@ -1,6 +1,10 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const fp = require('fastify-plugin');
+const {
+  getEffectivePermissions,
+  hasPermission,
+} = require('./permissions');
 
 const SALT_ROUNDS = 10;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -87,6 +91,23 @@ function requireAuth(fastify, _opts, done) {
     }
     request.user = user;
   });
+  // Route guard for a single granular permission. Owners always pass;
+  // moderators pass only when the owner granted the permission.
+  fastify.decorate('requirePermission', function (permission) {
+    return async function (request, reply) {
+      if (!request.session?.userId) {
+        return reply.code(401).send({ error: 'Unauthorized' });
+      }
+      const user = fastify.getUser(request.session.userId);
+      if (!user) {
+        return reply.code(401).send({ error: 'Unauthorized' });
+      }
+      if (!hasPermission(fastify.db, user, permission)) {
+        return reply.code(403).send({ error: 'Forbidden' });
+      }
+      request.user = user;
+    };
+  });
   done();
 }
 
@@ -109,6 +130,7 @@ function authRoutes(fastify, _opts, done) {
       login: user.login,
       role: user.role,
       verified: Boolean(user.verified),
+      permissions: getEffectivePermissions(db, user),
     };
   });
 
@@ -137,7 +159,15 @@ function authRoutes(fastify, _opts, done) {
       maxAge: Math.floor(SESSION_TTL_MS / 1000), // in seconds
     });
     
-    return { user: { id: user.id, login: user.login, role: user.role, verified: Boolean(user.verified) } };
+    return {
+      user: {
+        id: user.id,
+        login: user.login,
+        role: user.role,
+        verified: Boolean(user.verified),
+        permissions: getEffectivePermissions(db, user),
+      },
+    };
   });
 
   fastify.post('/api/auth/logout', {

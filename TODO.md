@@ -107,12 +107,12 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 ### 4. Extended Permission Management
 
 #### 4.1. Granular Moderator Permissions
-- [ ] Add database schema for granular permissions
-- [ ] Implement owner-only interface to assign permissions to moderators
-- [ ] Create permission types: create_rooms, delete_rooms, edit_rooms, manage_users, manage_permissions
-- [ ] Add API endpoints for managing user permissions in [users.js](./server/src/users.js)
-- [ ] Implement permission checks throughout the application
-- [ ] Create UI for owners to modify individual moderator permissions
+- [x] Add database schema for granular permissions
+- [x] Implement owner-only interface to assign permissions to moderators
+- [x] Create permission types: create_rooms, delete_rooms, edit_rooms, manage_users, manage_permissions
+- [x] Add API endpoints for managing user permissions in [users.js](./server/src/users.js)
+- [x] Implement permission checks throughout the application
+- [x] Create UI for owners to modify individual moderator permissions
 
 #### 4.2. Room Access Levels
 - [x] Define four room access levels: Public, Closed (password), Private (hidden), Restricted (whitelist)
@@ -193,7 +193,7 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 5. Room access levels (at least basic implementation) — ✅ **Done** (Public / Closed / Private / Restricted)
 
 ### Medium Priority (Would be nice for v0.4.0-alpha)
-1. Extended Permission Management
+1. Extended Permission Management — ✅ **Done**
 2. Mention Notifications
 3. Message Reactions
 

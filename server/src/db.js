@@ -108,6 +108,14 @@ function createDb(dbPath) {
       PRIMARY KEY (message_id, user_id, emoji)
     );
 
+    CREATE TABLE IF NOT EXISTS user_permissions (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      permission TEXT NOT NULL,
+      granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, permission)
+    );
+
     CREATE TABLE IF NOT EXISTS invites (
       id TEXT PRIMARY KEY,
       created_by INTEGER NOT NULL REFERENCES users(id),
@@ -174,6 +182,7 @@ function createDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_message_reads_user_id ON message_reads(user_id);
     CREATE INDEX IF NOT EXISTS idx_message_reactions_message_id ON message_reactions(message_id);
     CREATE INDEX IF NOT EXISTS idx_message_reactions_user_id ON message_reactions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions(user_id);
     CREATE INDEX IF NOT EXISTS idx_media_files_message_id ON media_files(message_id);
     CREATE INDEX IF NOT EXISTS idx_media_files_uploaded_by ON media_files(uploaded_by);
   `);

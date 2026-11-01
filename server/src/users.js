@@ -1,4 +1,12 @@
 const { deleteUserData } = require('./dataCleanup');
+const {
+  clearUserPermissions,
+  getEffectivePermissions,
+  getUserPermissions,
+  hasPermission,
+  normalizePermissionList,
+  replaceUserPermissions,
+} = require('./permissions');
 
 module.exports = function (fastify) {
   const db = fastify.db;
@@ -15,17 +23,29 @@ module.exports = function (fastify) {
 
   fastify.get('/api/users', {
     preHandler: [fastify.requireAuth], // Изменено: теперь любой аутентифицированный пользователь может получить список пользователей
-  }, async () => {
+  }, async (request) => {
     const rows = db.prepare(`
       SELECT id, login, role, verified, created_at
       FROM users
       ORDER BY created_at DESC
     `).all();
-    return { users: rows };
+
+    // Permission grants are only meaningful to admins who can act on them.
+    const includePermissions =
+      request.user.role === 'owner' ||
+      hasPermission(db, request.user, 'manage_permissions');
+
+    return {
+      users: rows.map((user) =>
+        includePermissions
+          ? { ...user, permissions: getEffectivePermissions(db, user) }
+          : user
+      ),
+    };
   });
 
   fastify.patch('/api/users/:id/role', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_users')],
   }, async (request, reply) => {
     const userId = Number(request.params.id);
     const { role } = request.body || {};
@@ -55,13 +75,22 @@ module.exports = function (fastify) {
     
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
 
+    // Permissions only apply to moderators. Demoting or promoting resets the
+    // grants so a future moderator never inherits stale capabilities.
+    if (target.role !== role) {
+      clearUserPermissions(db, userId);
+    }
+
     // Реалтайм: уведомляем клиентов об изменении роли пользователя
     if (fastify.broadcastUserRoleChanged) {
       const updatedUser = db.prepare(
         'SELECT id, login, role, verified, created_at FROM users WHERE id = ?'
       ).get(userId);
       if (updatedUser) {
-        fastify.broadcastUserRoleChanged(updatedUser);
+        fastify.broadcastUserRoleChanged({
+          ...updatedUser,
+          permissions: getEffectivePermissions(db, updatedUser),
+        });
       }
     }
 
@@ -69,7 +98,7 @@ module.exports = function (fastify) {
   });
 
   fastify.delete('/api/users/:id', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_users')],
   }, async (request, reply) => {
     const userId = Number(request.params.id);
     const reason = request.body?.reason || 'Account removed by administrator';
@@ -116,5 +145,72 @@ module.exports = function (fastify) {
     }
 
     return { ok: true };
+  });
+
+  fastify.get('/api/users/:id/permissions', {
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_permissions')],
+  }, async (request, reply) => {
+    const userId = Number(request.params.id);
+    const target = db.prepare('SELECT id, login, role FROM users WHERE id = ?').get(userId);
+    if (!target) return reply.code(404).send({ error: 'User not found' });
+
+    return {
+      userId: target.id,
+      role: target.role,
+      permissions: getUserPermissions(db, target.id),
+      effective: getEffectivePermissions(db, target),
+    };
+  });
+
+  fastify.put('/api/users/:id/permissions', {
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_permissions')],
+  }, async (request, reply) => {
+    const userId = Number(request.params.id);
+    const normalized = normalizePermissionList(request.body?.permissions);
+    if (!normalized.ok) {
+      return reply.code(400).send({ error: normalized.error });
+    }
+
+    const target = db.prepare('SELECT id, login, role FROM users WHERE id = ?').get(userId);
+    if (!target) return reply.code(404).send({ error: 'User not found' });
+    if (target.role === 'owner') {
+      return reply.code(400).send({ error: 'Owner permissions cannot be changed' });
+    }
+    if (target.role !== 'moderator') {
+      return reply.code(400).send({ error: 'Permissions can only be assigned to moderators' });
+    }
+
+    const actor = request.user;
+    const current = getUserPermissions(db, target.id);
+
+    // Delegated managers may not edit themselves or hand out the power to
+    // manage permissions. Only the owner can do that.
+    if (actor.role !== 'owner') {
+      if (actor.id === target.id) {
+        return reply.code(403).send({ error: 'Cannot change your own permissions' });
+      }
+      const changesManagePermissions =
+        current.includes('manage_permissions') !==
+        normalized.permissions.includes('manage_permissions');
+      if (changesManagePermissions) {
+        return reply.code(403).send({
+          error: 'Only the owner can change manage_permissions',
+        });
+      }
+    }
+
+    replaceUserPermissions(db, target.id, normalized.permissions, actor.id);
+
+    const effective = getEffectivePermissions(db, target);
+
+    if (fastify.broadcastAll) {
+      fastify.broadcastAll({
+        type: 'user_permissions_changed',
+        userId: target.id,
+        permissions: effective,
+      });
+    }
+
+    return { ok: true, userId: target.id, permissions: effective };
   });
 };

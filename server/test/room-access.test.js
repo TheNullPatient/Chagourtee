@@ -18,6 +18,7 @@ const Fastify = require('fastify');
 const { getDb } = require('../src/db');
 const roomsPlugin = require('../src/rooms');
 const messagesPlugin = require('../src/messages');
+const { hasPermission } = require('../src/permissions');
 
 test('room access levels control visibility, joining and messages', async () => {
   const { check, verify } = createChecker();
@@ -55,6 +56,14 @@ test('room access levels control visibility, joining and messages', async () => 
     if (request.user?.role !== 'owner' && request.user?.role !== 'moderator') {
       return reply.code(403).send({ error: 'Owner or moderator only' });
     }
+  });
+  app.decorate('requirePermission', (permission) => async (request, reply) => {
+    const user = request.user || app.getUser(Number(request.headers['x-test-user']));
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+    if (!hasPermission(db, user, permission)) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    request.user = user;
   });
   app.decorate('broadcastRoom', (_roomId, payload) => roomEvents.push(payload));
   app.decorate('broadcastRoomNotification', (_roomId, payload) => globalEvents.push(payload));

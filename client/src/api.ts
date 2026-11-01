@@ -108,11 +108,27 @@ export type VersionInfo = {
   release: string;
 };
 
+export type Permission =
+  | 'create_rooms'
+  | 'delete_rooms'
+  | 'edit_rooms'
+  | 'manage_users'
+  | 'manage_permissions';
+
+export const ALL_PERMISSIONS: Permission[] = [
+  'create_rooms',
+  'delete_rooms',
+  'edit_rooms',
+  'manage_users',
+  'manage_permissions',
+];
+
 export type User = {
   id: number;
   login: string;
   role: 'owner' | 'moderator' | 'member';
   verified: boolean;
+  permissions?: Permission[];
 };
 
 // Fallback palette for rooms that have not customized their reactions.
@@ -588,6 +604,21 @@ export const users = {
       method: 'DELETE',
       body: JSON.stringify({ reason }),
     }),
+  getPermissions: (userId: number) =>
+    api<{
+      userId: number;
+      role: 'owner' | 'moderator' | 'member';
+      permissions: Permission[];
+      effective: Permission[];
+    }>(`/api/users/${userId}/permissions`),
+  setPermissions: (userId: number, permissions: Permission[]) =>
+    api<{ ok: boolean; userId: number; permissions: Permission[] }>(
+      `/api/users/${userId}/permissions`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ permissions }),
+      }
+    ),
 };
 
 export const profile = {
