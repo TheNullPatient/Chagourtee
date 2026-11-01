@@ -1,5 +1,10 @@
 const { deleteRoomData, clearRoomMessages } = require('./dataCleanup');
 const {
+  DEFAULT_REACTION_EMOJIS,
+  normalizeReactionEmojiList,
+  serializeReactionEmojis,
+} = require('./reactions');
+const {
   DEFAULT_ACCESS_LEVEL,
   isValidAccessLevel,
   normalizeAccessLevel,
@@ -43,6 +48,7 @@ function getRoomSummary(db, roomId, userId) {
          r.created_by,
          r.access_level,
          r.password_hash,
+         r.reaction_emojis,
          r.created_at,
          (SELECT COUNT(*) FROM messages WHERE room_id = r.id) as message_count,
          (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as member_count,
@@ -99,6 +105,7 @@ module.exports = function (fastify) {
         r.created_by,
         r.access_level,
         r.password_hash,
+        r.reaction_emojis,
         r.created_at,
         (SELECT COUNT(*) FROM messages WHERE room_id = r.id) as message_count,
         (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as member_count,
@@ -126,7 +133,7 @@ module.exports = function (fastify) {
   fastify.post('/api/rooms', {
     preHandler: [fastify.requireAuth, fastify.requireOwner],
   }, async (request, reply) => {
-    const { name, accessLevel, password, memberIds } = request.body || {};
+    const { name, accessLevel, password, memberIds, reactionEmojis } = request.body || {};
     if (!name || !String(name).trim()) {
       return reply.code(400).send({ error: 'Room name required' });
     }
@@ -154,6 +161,15 @@ module.exports = function (fastify) {
       passwordHash = hashRoomPassword(password);
     }
 
+    let palette = [...DEFAULT_REACTION_EMOJIS];
+    if (reactionEmojis !== undefined) {
+      const normalized = normalizeReactionEmojiList(reactionEmojis);
+      if (!normalized.ok) {
+        return reply.code(400).send({ error: normalized.error });
+      }
+      palette = normalized.emojis;
+    }
+
     // Check if a room with this name already exists
     const existingRoom = db.prepare('SELECT id FROM rooms WHERE name = ?').get(trimmedName);
     if (existingRoom) {
@@ -161,8 +177,14 @@ module.exports = function (fastify) {
     }
     
     const result = db.prepare(
-      'INSERT INTO rooms (name, created_by, access_level, password_hash) VALUES (?, ?, ?, ?)'
-    ).run(trimmedName, request.session.userId, level, passwordHash);
+      'INSERT INTO rooms (name, created_by, access_level, password_hash, reaction_emojis) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      trimmedName,
+      request.session.userId,
+      level,
+      passwordHash,
+      serializeReactionEmojis(palette)
+    );
 
     if (memberIds !== undefined) {
       const memberResult = replaceRoomMembers(
@@ -205,7 +227,7 @@ module.exports = function (fastify) {
     preHandler: [fastify.requireAuth, fastify.requireOwner],
   }, async (request, reply) => {
     const id = Number(request.params.id);
-    const { name, accessLevel, password, memberIds } = request.body || {};
+    const { name, accessLevel, password, memberIds, reactionEmojis } = request.body || {};
 
     const storedRoom = getRoom(db, id);
     if (!storedRoom) return reply.code(404).send({ error: 'Room not found' });
@@ -285,13 +307,22 @@ module.exports = function (fastify) {
       }
     }
 
+    let nextReactionEmojis = storedRoom.reaction_emojis;
+    if (reactionEmojis !== undefined) {
+      const normalized = normalizeReactionEmojiList(reactionEmojis);
+      if (!normalized.ok) {
+        return reply.code(400).send({ error: normalized.error });
+      }
+      nextReactionEmojis = serializeReactionEmojis(normalized.emojis);
+    }
+
     const accessChanged =
       nextLevel !== currentLevel || passwordChanged || memberResult !== null;
 
     const update = db.transaction(() => {
       db.prepare(
-        'UPDATE rooms SET name = ?, access_level = ?, password_hash = ? WHERE id = ?'
-      ).run(trimmedName, nextLevel, nextPasswordHash, id);
+        'UPDATE rooms SET name = ?, access_level = ?, password_hash = ?, reaction_emojis = ? WHERE id = ?'
+      ).run(trimmedName, nextLevel, nextPasswordHash, nextReactionEmojis, id);
 
       if (memberResult) {
         replaceRoomMembers(db, id, memberResult.ids, request.session.userId);

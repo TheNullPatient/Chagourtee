@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../AuthContext';
 import type { Room, Invite, User, MediaStorageSettings, RoomAccessLevel, RoomUpdateInput } from '../api';
-import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media } from '../api';
+import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media, DEFAULT_REACTION_EMOJIS } from '../api';
 import { useServerName } from '../ServerNameContext';
 import { initializeWebSocket, addMessageHandler, removeMessageHandler, addOpenHandler, removeOpenHandler } from '../websocket';
 import { useToast } from '../ToastContext';
@@ -19,6 +19,7 @@ import {
   IconPencil,
   IconPlus,
   IconShield,
+  IconSmile,
   IconSparkles,
   IconTicket,
   IconTrash,
@@ -115,7 +116,18 @@ export default function Admin() {
   const [accessMembersLoading, setAccessMembersLoading] = useState(false);
   const [accessSaving, setAccessSaving] = useState(false);
 
+  // State for the per-room reaction palette
+  const [reactionsRoomId, setReactionsRoomId] = useState<number | null>(null);
+  const [reactionEmojiInput, setReactionEmojiInput] = useState('');
+  const [reactionsSaving, setReactionsSaving] = useState(false);
+
   const accessRoom = rooms.find((room) => room.id === accessRoomId) || null;
+  const reactionsRoom = rooms.find((room) => room.id === reactionsRoomId) || null;
+  const reactionEmojiPreview = useMemo(
+    () =>
+      [...new Set(reactionEmojiInput.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))],
+    [reactionEmojiInput]
+  );
   const accessLevelHint: Record<RoomAccessLevel, string> = {
     public: 'Комната видна всем, пароль не нужен.',
     closed: 'Комната видна всем, но войти можно только по паролю.',
@@ -564,6 +576,54 @@ export default function Admin() {
     setAccessRoomPassword('');
     setAccessRoomMemberIds([]);
     setAccessMembersLoading(false);
+  }
+
+  function openReactionSettings(room: Room) {
+    setReactionsRoomId(room.id);
+    setReactionEmojiInput(
+      (room.reaction_emojis && room.reaction_emojis.length > 0
+        ? room.reaction_emojis
+        : DEFAULT_REACTION_EMOJIS
+      ).join(' ')
+    );
+  }
+
+  function closeReactionSettings() {
+    setReactionsRoomId(null);
+    setReactionEmojiInput('');
+    setReactionsSaving(false);
+  }
+
+  async function saveReactionSettings() {
+    if (reactionsRoomId === null) return;
+
+    const emojis = reactionEmojiPreview;
+    if (emojis.length === 0) {
+      showToast('Добавьте хотя бы один эмодзи', 'error');
+      return;
+    }
+    if (emojis.length > 24) {
+      showToast('Можно выбрать не более 24 эмодзи', 'error');
+      return;
+    }
+    if (emojis.some((emoji) => emoji.length > 32)) {
+      showToast('Один из эмодзи слишком длинный', 'error');
+      return;
+    }
+
+    setReactionsSaving(true);
+    try {
+      const updated = await roomsApi.update(reactionsRoomId, { reactionEmojis: emojis });
+      setRooms((prev) =>
+        prev.map((room) => (room.id === updated.id ? { ...room, ...updated } : room))
+      );
+      closeReactionSettings();
+      showToast('Реакции комнаты обновлены', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка', 'error');
+    } finally {
+      setReactionsSaving(false);
+    }
   }
 
   async function saveRoomAccess() {
@@ -1338,6 +1398,16 @@ export default function Admin() {
                       </span>
                     </div>
                     <div className="admin-room-actions">
+                      <button
+                        type="button"
+                        onClick={() => openReactionSettings(r)}
+                        className="admin-btn-room admin-btn-room--accent"
+                        title="Настроить реакции"
+                      >
+                        <span className="icon-inline" aria-hidden>
+                          <IconSmile />
+                        </span>
+                      </button>
                       {r.name === 'main' ? (
                         <button
                           type="button"
@@ -1876,6 +1946,60 @@ export default function Admin() {
               </button>
               <button type="button" onClick={saveRoomAccess} disabled={accessSaving || accessMembersLoading}>
                 {accessSaving ? 'Сохранение…' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reaction palette Modal */}
+      {reactionsRoomId !== null && reactionsRoom && (
+        <div className="admin-modal-overlay" onClick={closeReactionSettings}>
+          <div className="admin-modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3 className="admin-modal-title">Реакции комнаты «{reactionsRoom.name}»</h3>
+
+            <div className="admin-modal-field">
+              <label className="form-label">Эмодзи для быстрых реакций:</label>
+              <input
+                type="text"
+                value={reactionEmojiInput}
+                onChange={(e) => setReactionEmojiInput(e.target.value)}
+                placeholder="👍 ❤️ 😂 😮 😢 🔥"
+                autoFocus
+              />
+              <p className="admin-field-hint">
+                До 24 эмодзи, разделённых пробелом или запятой. Участники смогут
+                ставить только эмодзи из этого набора.
+              </p>
+              {reactionEmojiPreview.length > 0 && (
+                <div className="admin-reaction-preview" aria-label="Предпросмотр реакций">
+                  {reactionEmojiPreview.map((emoji, index) => (
+                    <span key={`${emoji}-${index}`} className="admin-reaction-preview-chip">
+                      {emoji}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {reactionEmojiPreview.length > 24 && (
+                <p className="admin-field-hint admin-field-hint--warn">
+                  Сейчас выбрано {reactionEmojiPreview.length} — сохранить можно не больше 24.
+                </p>
+              )}
+            </div>
+
+            <div className="admin-modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setReactionEmojiInput(DEFAULT_REACTION_EMOJIS.join(' '))}
+              >
+                По умолчанию
+              </button>
+              <button type="button" className="secondary" onClick={closeReactionSettings}>
+                Отмена
+              </button>
+              <button type="button" onClick={saveReactionSettings} disabled={reactionsSaving}>
+                {reactionsSaving ? 'Сохранение…' : 'Сохранить'}
               </button>
             </div>
           </div>

@@ -1,8 +1,13 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const {
+  DEFAULT_REACTION_EMOJIS,
+  serializeReactionEmojis,
+} = require('./reactions');
 
 const DEFAULT_DB_PATH = path.join(process.cwd(), 'data', 'chagourtee.db');
+const DEFAULT_REACTION_EMOJIS_JSON = serializeReactionEmojis(DEFAULT_REACTION_EMOJIS);
 
 function getDbPath() {
   return process.env.CHAGOURTEE_DB_PATH || DEFAULT_DB_PATH;
@@ -53,6 +58,7 @@ function createDb(dbPath) {
       created_by INTEGER NOT NULL REFERENCES users(id),
       access_level TEXT NOT NULL DEFAULT 'public',
       password_hash TEXT,
+      reaction_emojis TEXT NOT NULL DEFAULT '${DEFAULT_REACTION_EMOJIS_JSON}',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -92,6 +98,14 @@ function createDb(dbPath) {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       read_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (message_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS message_reactions (
+      message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      emoji TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (message_id, user_id, emoji)
     );
 
     CREATE TABLE IF NOT EXISTS invites (
@@ -158,6 +172,8 @@ function createDb(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id);
     CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(room_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_message_reads_user_id ON message_reads(user_id);
+    CREATE INDEX IF NOT EXISTS idx_message_reactions_message_id ON message_reactions(message_id);
+    CREATE INDEX IF NOT EXISTS idx_message_reactions_user_id ON message_reactions(user_id);
     CREATE INDEX IF NOT EXISTS idx_media_files_message_id ON media_files(message_id);
     CREATE INDEX IF NOT EXISTS idx_media_files_uploaded_by ON media_files(uploaded_by);
   `);
@@ -278,6 +294,17 @@ function createDb(dbPath) {
     if (!roomColumns.includes('password_hash')) {
       db.exec('ALTER TABLE rooms ADD COLUMN password_hash TEXT');
     }
+    if (!roomColumns.includes('reaction_emojis')) {
+      db.exec(
+        `ALTER TABLE rooms ADD COLUMN reaction_emojis TEXT NOT NULL DEFAULT '${DEFAULT_REACTION_EMOJIS_JSON}'`
+      );
+    }
+
+    // Rooms created before the column existed (or with a manually cleared JSON)
+    // should still offer the default palette.
+    db.prepare(
+      "UPDATE rooms SET reaction_emojis = ? WHERE reaction_emojis IS NULL OR trim(reaction_emojis) = ''"
+    ).run(DEFAULT_REACTION_EMOJIS_JSON);
 
     const unlockColumns = db
       .prepare('PRAGMA table_info(room_unlocks)')

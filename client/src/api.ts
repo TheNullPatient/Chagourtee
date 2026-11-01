@@ -115,6 +115,9 @@ export type User = {
   verified: boolean;
 };
 
+// Fallback palette for rooms that have not customized their reactions.
+export const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+
 export type RoomAccessLevel = 'public' | 'closed' | 'private' | 'restricted';
 
 export type Room = {
@@ -126,6 +129,7 @@ export type Room = {
   locked?: boolean;
   password_required?: boolean;
   member_only?: boolean;
+  reaction_emojis?: string[];
   message_count?: number;
   unread_count?: number;
   member_count?: number;
@@ -144,6 +148,7 @@ export type RoomUpdateInput = {
   accessLevel?: RoomAccessLevel;
   password?: string | null;
   memberIds?: number[];
+  reactionEmojis?: string[];
 };
 
 export type RoomCreateInput = {
@@ -151,6 +156,7 @@ export type RoomCreateInput = {
   accessLevel?: RoomAccessLevel;
   password?: string;
   memberIds?: number[];
+  reactionEmojis?: string[];
 };
 
 export type MediaFile = {
@@ -192,6 +198,17 @@ export type MessageReply = {
   deleted: boolean;
 };
 
+export type MessageReactionUser = {
+  id: number;
+  login: string;
+};
+
+export type MessageReaction = {
+  emoji: string;
+  count: number;
+  users: MessageReactionUser[];
+};
+
 export type Message = {
   id: number;
   room_id: number;
@@ -204,6 +221,7 @@ export type Message = {
   is_read?: 0 | 1;
   media?: MediaFile[]; // Optional array of media files attached to the message
   replyTo?: MessageReply | null;
+  reactions?: MessageReaction[];
 };
 
 export type MessageListResponse = {
@@ -403,6 +421,17 @@ export const messages = {
         body: JSON.stringify({ lastReadMessageId }),
       }
     ),
+  toggleReaction: (roomId: number, messageId: number, emoji: string) =>
+    api<{
+      ok: boolean;
+      messageId: number;
+      emoji: string;
+      added: boolean;
+      reactions: MessageReaction[];
+    }>(`/api/rooms/${roomId}/messages/${messageId}/reactions`, {
+      method: 'POST',
+      body: JSON.stringify({ emoji }),
+    }),
 };
 
 export const media = {

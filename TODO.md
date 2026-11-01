@@ -140,12 +140,12 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 - [x] Remove mention notification after scrolling to or clicking on the button
 
 #### 5.3. Message Reactions
-- [ ] Implement reaction system allowing customizable emojis per room
-- [ ] Add reaction buttons appearing above the message input
-- [ ] Create UI for displaying reactions under messages
-- [ ] Add indicator for unseen reactions when scrolled down
-- [ ] Implement scroll-to-reaction button positioned above the "scroll to bottom" button
-- [ ] Add API endpoints for managing reactions in [messages.js](./server/src/messages.js)
+- [x] Implement reaction system allowing customizable emojis per room
+- [x] Add reaction buttons appearing above the message input
+- [x] Create UI for displaying reactions under messages
+- [x] Add indicator for unseen reactions when scrolled down
+- [x] Implement scroll-to-reaction button positioned above the "scroll to bottom" button
+- [x] Add API endpoints for managing reactions in [messages.js](./server/src/messages.js)
 
 ### 6. New Room Types
 

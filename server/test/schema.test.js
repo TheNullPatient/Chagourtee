@@ -135,6 +135,7 @@ test('update-schema migrates an outdated database in place', () => {
       'media_storage_settings',
       'room_members',
       'room_unlocks',
+      'message_reactions',
     ]) {
       check(`creates the ${table} table`, state.tables.includes(table));
     }
@@ -144,6 +145,10 @@ test('update-schema migrates an outdated database in place', () => {
     check(
       'adds room access columns',
       state.roomColumns.includes('access_level') && state.roomColumns.includes('password_hash')
+    );
+    check(
+      'adds rooms.reaction_emojis',
+      state.roomColumns.includes('reaction_emojis')
     );
     check(
       'adds room unlock expiry columns',
@@ -178,6 +183,11 @@ test('update-schema migrates an outdated database in place', () => {
       'creates the room access indexes',
       state.indexes.includes('idx_room_members_user_id') &&
         state.indexes.includes('idx_room_unlocks_user_id')
+    );
+    check(
+      'creates the reaction indexes',
+      state.indexes.includes('idx_message_reactions_message_id') &&
+        state.indexes.includes('idx_message_reactions_user_id')
     );
     check(
       'creates the verification code lookup index',

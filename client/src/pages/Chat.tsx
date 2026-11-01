@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import type { Room, Message, User, MessageListResponse, MediaFile, MediaUploadSettings } from '../api';
-import { rooms as roomsApi, messages as messagesApi, users, media } from '../api';
+import type { Room, Message, User, MessageListResponse, MediaFile, MediaUploadSettings, MessageReaction } from '../api';
+import { rooms as roomsApi, messages as messagesApi, users, media, DEFAULT_REACTION_EMOJIS } from '../api';
 import {
   getWebSocket,
   addMessageHandler,
@@ -123,6 +123,11 @@ function formatReplyPreview(body: string, maxLength = 120): string {
   return normalized.length > maxLength
     ? `${normalized.slice(0, maxLength - 1)}…`
     : normalized;
+}
+
+function hasUserReacted(reaction: MessageReaction, userId: number | undefined): boolean {
+  if (!userId) return false;
+  return reaction.users.some((reactor) => reactor.id === userId);
 }
 
 /**
@@ -278,6 +283,11 @@ export default function Chat() {
   // Mentions that arrived while the user was scrolled up in the current room.
   // The floating button steps through them and clears the ones already visited.
   const [unseenMentions, setUnseenMentions] = useState<Set<number>>(new Set());
+  // Reactions from other users that arrived while the feed was scrolled up.
+  // Each entry is a message id; the button steps through them like mentions.
+  const [unseenReactions, setUnseenReactions] = useState<Set<number>>(new Set());
+  // Message the emoji palette above the composer will react to.
+  const [reactionTarget, setReactionTarget] = useState<Message | null>(null);
   
   // State for media uploads
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -475,6 +485,15 @@ export default function Chat() {
   const typingVerb = typingUsers.length === 1 ? 'печатает' : 'печатают';
   const canJoinRoom = roomsLoaded && activeRoomId !== null && !activeRoomLocked;
   const isPrivilegedUser = user?.role === 'owner' || user?.role === 'moderator';
+  const roomReactionEmojis =
+    activeRoom?.reaction_emojis && activeRoom.reaction_emojis.length > 0
+      ? activeRoom.reaction_emojis
+      : DEFAULT_REACTION_EMOJIS;
+  // Keep the open picker in sync with live updates (edits and other users'
+  // reactions) while still falling back to the snapshot if it is not loaded.
+  const reactionTargetMessage = reactionTarget
+    ? messages.find((message) => message.id === reactionTarget.id) || reactionTarget
+    : null;
   // Locking only makes sense for password-protected rooms the user is inside.
   const canLockRoom =
     Boolean(roomId) && activeRoom?.access_level === 'closed' && !activeRoomLocked;
@@ -505,6 +524,7 @@ export default function Chat() {
       skipAutoScrollRef.current = true;
       setMessages(list);
       setFirstUnreadMessageId(first_unread_message_id ?? null);
+      setReactionTarget(null);
       
       // Clear mentions for this room when loading messages
       setMentionedRooms(prev => {
@@ -543,9 +563,12 @@ export default function Chat() {
     };
   }, [roomId]);
 
-  // Mentions tracked for the floating button belong to the room they came from.
+  // Mentions and reactions tracked for the floating buttons belong to the room
+  // they came from.
   useEffect(() => {
     setUnseenMentions(new Set());
+    setUnseenReactions(new Set());
+    setReactionTarget(null);
   }, [roomId]);
 
   useEffect(() => {
@@ -1095,6 +1118,33 @@ export default function Chat() {
             })
           );
           break;
+
+        case 'reaction_updated':
+          if (data.messageId != null && Array.isArray(data.reactions)) {
+            setMessages(prev =>
+              prev.map(msg =>
+                msg.id === data.messageId
+                  ? { ...msg, reactions: data.reactions }
+                  : msg
+              )
+            );
+
+            // Collect reactions from other users for the floating jump button
+            // only while the user is reading older messages.
+            if (
+              data.userId !== user?.id &&
+              data.added !== false &&
+              !shouldAutoScrollRef.current
+            ) {
+              setUnseenReactions(prev => {
+                if (prev.has(data.messageId)) return prev;
+                const next = new Set(prev);
+                next.add(data.messageId);
+                return next;
+              });
+            }
+          }
+          break;
           
         case 'message_deleted':
           // Remove the message from the list
@@ -1109,6 +1159,13 @@ export default function Chat() {
           );
           setReplyingTo(prev => (prev?.id === data.messageId ? null : prev));
           setEditingMessage(prev => prev?.id === data.messageId ? null : prev);
+          setReactionTarget(prev => (prev?.id === data.messageId ? null : prev));
+          setUnseenReactions(prev => {
+            if (!prev.has(data.messageId)) return prev;
+            const next = new Set(prev);
+            next.delete(data.messageId);
+            return next;
+          });
           
           // After deleting a message, update the scroll button visibility
           setTimeout(updateScrollButtonVisibility, 0);
@@ -1134,6 +1191,11 @@ export default function Chat() {
             );
             setReplyingTo(prev => (prev && data.messageIds.includes(prev.id) ? null : prev));
             setEditingMessage(prev => prev && data.messageIds.includes(prev.id) ? null : prev);
+            setReactionTarget(prev => (prev && data.messageIds.includes(prev.id) ? null : prev));
+            setUnseenReactions(prev => {
+              const next = new Set([...prev].filter((id) => !data.messageIds.includes(id)));
+              return next.size === prev.size ? prev : next;
+            });
             
             // After deleting messages, update the scroll button visibility
             setTimeout(updateScrollButtonVisibility, 0);
@@ -1173,6 +1235,8 @@ export default function Chat() {
         case 'room_messages_cleared':
           if (data.roomId === roomId) {
             setMessages([]);
+            setUnseenReactions(new Set());
+            setReactionTarget(null);
           }
           break;
           
@@ -1322,8 +1386,9 @@ export default function Chat() {
     // Reaching the bottom means the user has read everything, even if they
     // scrolled there manually instead of pressing the button.
     if (distanceToBottom < 40) {
-      // All mentions are behind the viewport now; the jump button is done.
+      // All mentions/reactions are behind the viewport now; the buttons are done.
       setUnseenMentions(prev => (prev.size === 0 ? prev : new Set()));
+      setUnseenReactions(prev => (prev.size === 0 ? prev : new Set()));
       void markRoomAsReadRef.current();
     }
 
@@ -1383,8 +1448,25 @@ export default function Chat() {
         bottomPosition += replyComposePreview.offsetHeight;
       }
 
+      const reactionPicker = document.querySelector('.reaction-picker') as HTMLElement;
+      if (reactionPicker) {
+        bottomPosition += reactionPicker.offsetHeight;
+      }
+
       // Apply the calculated position
       scrollButton.style.bottom = `${bottomPosition}px`;
+
+      // Keep the jump buttons stacked directly above the scroll button even
+      // when the composer grows (reply preview, files, reaction palette…).
+      const mentionButton = document.querySelector('.jump-to-mention-btn') as HTMLElement;
+      if (mentionButton) {
+        mentionButton.style.bottom = `${bottomPosition + 54}px`;
+      }
+      const reactionButton = document.querySelector('.jump-to-reaction-btn') as HTMLElement;
+      if (reactionButton) {
+        const mentionOffset = reactionButton.classList.contains('with-mention') ? 54 : 0;
+        reactionButton.style.bottom = `${bottomPosition + 54 + mentionOffset}px`;
+      }
     });
   }, []);
 
@@ -1403,16 +1485,18 @@ export default function Chat() {
     const selectedFilesPreview = document.querySelector('.selected-files-preview');
     const editingPanel = document.querySelector('.editing-panel');
     const replyComposePreview = document.querySelector('.reply-compose-preview');
+    const reactionPicker = document.querySelector('.reaction-picker');
     
     if (selectedFilesPreview) resizeObserver.observe(selectedFilesPreview);
     if (editingPanel) resizeObserver.observe(editingPanel);
     if (replyComposePreview) resizeObserver.observe(replyComposePreview);
+    if (reactionPicker) resizeObserver.observe(reactionPicker);
 
     // Clean up observer on unmount
     return () => {
       resizeObserver.disconnect();
     };
-  }, [adjustScrollButtonPosition, selectedFiles.length, editingMessage, replyingTo]);
+  }, [adjustScrollButtonPosition, selectedFiles.length, editingMessage, replyingTo, reactionTarget]);
 
   // Scroll to bottom function
   const scrollToBottom = () => {
@@ -1428,8 +1512,9 @@ export default function Chat() {
     // Reset auto-scroll behavior when user manually scrolls to bottom
     shouldAutoScrollRef.current = true;
     setShowScrollButton(false);
-    // All mentions are behind the viewport now; the jump button is done.
+    // All mentions/reactions are behind the viewport now; the jump buttons are done.
     setUnseenMentions(new Set());
+    setUnseenReactions(new Set());
     setTimeout(() => {
       void markRoomAsReadRef.current();
     }, 200);
@@ -1460,6 +1545,33 @@ export default function Chat() {
 
     // Auto-scroll resumes once we reach the bottom again; mark room as read
     // after a short delay so the scroll lands first.
+    setTimeout(() => {
+      void markRoomAsReadRef.current();
+    }, 300);
+  };
+
+  // Jump to the first message with an unseen reaction in the current room.
+  const jumpToNextReaction = () => {
+    if (!roomId || unseenReactions.size === 0) return;
+
+    const firstId = [...unseenReactions].sort((a, b) => a - b)[0];
+    if (firstId === undefined) return;
+    const messageEl = document.querySelector(
+      `[data-message-id="${firstId}"]`
+    ) as HTMLElement | null;
+
+    if (messageEl) {
+      messageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      messageEl.classList.add('reaction-jump-target');
+      setTimeout(() => messageEl.classList.remove('reaction-jump-target'), 1500);
+    }
+
+    setUnseenReactions(prev => {
+      const next = new Set(prev);
+      next.delete(firstId);
+      return next;
+    });
+
     setTimeout(() => {
       void markRoomAsReadRef.current();
     }, 300);
@@ -1859,6 +1971,30 @@ export default function Chat() {
     }
   }
 
+  // Toggle an emoji reaction. The server answers with the full grouped list,
+  // so the chip counts stay consistent even if two users react at once.
+  async function toggleReaction(messageId: number, emoji: string) {
+    if (!roomId) return;
+    try {
+      const result = await messagesApi.toggleReaction(roomId, messageId, emoji);
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === messageId ? { ...msg, reactions: result.reactions } : msg
+        )
+      );
+      setUnseenReactions(prev => {
+        if (!prev.has(messageId)) return prev;
+        const next = new Set(prev);
+        next.delete(messageId);
+        return next;
+      });
+      setReactionTarget(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Не удалось поставить реакцию';
+      showToast(errorTranslations[message] || message, 'error');
+    }
+  }
+
   // Auto-resize textarea based on content
   const adjustTextareaHeight = useCallback(() => {
     if (textareaRef.current) {
@@ -2098,6 +2234,7 @@ export default function Chat() {
   const startEditingMessage = (message: Message | null) => {
     if (!message) return;
     setReplyingTo(null);
+    setReactionTarget(null);
     setEditingMessage({ 
       id: message.id, 
       body: message.body, 
@@ -2228,6 +2365,7 @@ export default function Chat() {
     if (editingMessage) {
       cancelEditing();
     }
+    setReactionTarget(null);
     setReplyingTo(message);
     hideContextMenu();
     setTimeout(() => textareaRef.current?.focus(), 0);
@@ -2659,6 +2797,43 @@ export default function Chat() {
                               mediaPosition={m.mediaPosition ?? 'below'}
                             />
                           </div>
+
+                          <div
+                            className="chat-message-reactions"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {(m.reactions ?? []).map((reaction) => {
+                              const reacted = hasUserReacted(reaction, user?.id);
+                              return (
+                                <button
+                                  key={reaction.emoji}
+                                  type="button"
+                                  className={`chat-reaction${reacted ? ' active' : ''}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void toggleReaction(m.id, reaction.emoji);
+                                  }}
+                                  title={`${reaction.users.map((reactor) => reactor.login).join(', ')}`}
+                                  aria-pressed={reacted}
+                                >
+                                  <span className="chat-reaction-emoji">{reaction.emoji}</span>
+                                  <span className="chat-reaction-count">{reaction.count}</span>
+                                </button>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              className="chat-reaction-add"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setReactionTarget(m);
+                              }}
+                              aria-label="Добавить реакцию"
+                              title="Добавить реакцию"
+                            >
+                              +
+                            </button>
+                          </div>
                           
                           {isSelected && (
                             <div className="message-selected-indicator">✓</div>
@@ -2721,6 +2896,21 @@ export default function Chat() {
                     )}
                   </button>
                 )}
+                {unseenReactions.size > 0 && (
+                  <button
+                    className={`jump-to-reaction-btn${unseenMentions.size > 0 ? ' with-mention' : ''}`}
+                    onClick={jumpToNextReaction}
+                    aria-label={`Перейти к ${unseenReactions.size} сообщениям с новыми реакциями`}
+                    title={`Новые реакции: ${unseenReactions.size}`}
+                  >
+                    <span className="reaction-badge">{unseenReactions.size}</span>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <circle cx="12" cy="12" r="9" strokeWidth="2" />
+                      <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M9 9h.01M15 9h.01" strokeWidth="2.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
                 {unseenMentions.size > 0 && (
                   <button
                     className="jump-to-mention-btn"
@@ -2769,6 +2959,18 @@ export default function Chat() {
                     }}
                   >
                     Копировать
+                  </button>
+
+                  <button
+                    className="context-menu-item"
+                    onClick={() => {
+                      if (contextMenu.message) {
+                        setReactionTarget(contextMenu.message);
+                      }
+                      hideContextMenu();
+                    }}
+                  >
+                    Реакция
                   </button>
 
                   <button
@@ -3146,6 +3348,47 @@ export default function Chat() {
                     className="reply-compose-cancel"
                     onClick={() => setReplyingTo(null)}
                     aria-label="Отменить ответ"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {reactionTargetMessage && !editingMessage && (
+                <div className="reaction-picker" role="group" aria-label="Выбор реакции">
+                  <div className="reaction-picker-info">
+                    <span className="reaction-picker-label">
+                      Реакция на сообщение <strong>{reactionTargetMessage.login}</strong>
+                    </span>
+                    <span className="reaction-picker-preview">
+                      {formatReplyPreview(reactionTargetMessage.body)}
+                    </span>
+                  </div>
+                  <div className="reaction-picker-options">
+                    {roomReactionEmojis.map((emoji) => {
+                      const existing = reactionTargetMessage.reactions?.find(
+                        (reaction) => reaction.emoji === emoji
+                      );
+                      const reacted = existing ? hasUserReacted(existing, user?.id) : false;
+                      return (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className={`reaction-picker-option${reacted ? ' active' : ''}`}
+                          onClick={() => void toggleReaction(reactionTargetMessage.id, emoji)}
+                          title={reacted ? 'Убрать реакцию' : 'Поставить реакцию'}
+                          aria-pressed={reacted}
+                        >
+                          {emoji}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    className="reaction-picker-cancel"
+                    onClick={() => setReactionTarget(null)}
+                    aria-label="Закрыть выбор реакции"
                   >
                     ×
                   </button>

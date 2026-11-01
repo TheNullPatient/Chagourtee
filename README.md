@@ -21,6 +21,7 @@ Self-hosted messenger: the owner runs the server on their computer, creates invi
 - **Administration**: Control panel for creating rooms and invites
 - **Message editing**: Ability to edit and delete own messages
 - **Message replies**: Quotes, jump to the original message and a notification for the replied-to user
+- **Message reactions**: Quick emoji reactions with a per-room palette configured by the owner, grouped counters and a jump to unseen reactions
 - **Room access levels**: Public, password-protected, private and invite-only rooms
   - The password is requested on every visit; it can be remembered for 5 minutes to 1 day, or until a manual lock
   - A lock button in the room header locks the room manually; owners and moderators can lock it for everyone
@@ -332,6 +333,7 @@ npm run lint
 - `DELETE /api/rooms/:id/unlock` – forget the room password immediately
 - `POST /api/rooms/:id/lock` – owner/moderator locks the room for everyone (drops all remembered passwords)
 - `GET /api/rooms/:id/messages`, `POST /api/rooms/:id/messages` – messages
+- `POST /api/rooms/:id/messages/:messageId/reactions` – toggle an emoji reaction from the room palette
 - `GET/POST/DELETE /api/invites` – invites
 - `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – manual verification
 - `GET /api/verification/comments` – saved comments of approved members
@@ -377,6 +379,7 @@ Backend built on Fastify using SQLite for data storage:
 - Viewing and filtering rooms
 - Sending, editing and deleting own messages
 - Replying to messages with a quote and a jump to the original
+- Adding and removing emoji reactions, with a jump to unseen reactions
 - Entering password-protected rooms
 - Showing "typing..." status
 - Showing online status of other users
@@ -385,6 +388,7 @@ Backend built on Fastify using SQLite for data storage:
 ### For administrators (owner):
 - Creating and renaming rooms
 - Configuring room access level, password and the invite list
+- Choosing the emoji palette available for reactions in each room
 - Managing all users (including assigning moderator roles)
 - Creating invites with restrictions
 - Verifying users manually or with one-time codes

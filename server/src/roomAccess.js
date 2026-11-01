@@ -13,6 +13,7 @@
  */
 
 const { hashPassword, verifyPassword, isOwnerOrModerator } = require('./auth');
+const { parseReactionEmojis } = require('./reactions');
 
 const ACCESS_LEVELS = Object.freeze(['public', 'closed', 'private', 'restricted']);
 const DEFAULT_ACCESS_LEVEL = 'public';
@@ -42,7 +43,7 @@ function isPrivileged(user) {
 function getRoom(db, roomId) {
   return db
     .prepare(
-      `SELECT id, name, created_by, access_level, password_hash, created_at
+      `SELECT id, name, created_by, access_level, password_hash, reaction_emojis, created_at
        FROM rooms WHERE id = ?`
     )
     .get(roomId);
@@ -278,11 +279,16 @@ function revokeEphemeralUnlock(db, roomId, userId) {
 function decorateRoom(db, room, user) {
   if (!room) return room;
   const access = getRoomAccess(db, room, user);
-  const { password_hash: passwordHash, ...rest } = room;
+  const {
+    password_hash: passwordHash,
+    reaction_emojis: reactionEmojis,
+    ...rest
+  } = room;
   return {
     ...rest,
     access_level: normalizeAccessLevel(room.access_level),
     has_password: Boolean(passwordHash),
+    reaction_emojis: parseReactionEmojis(reactionEmojis),
     locked: access.locked,
     password_required: access.passwordRequired,
     member_only: access.memberOnly,

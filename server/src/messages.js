@@ -1,6 +1,10 @@
 const { isOwnerOrModerator } = require('./auth');
 const { collectMediaForMessages, removeMediaFiles } = require('./dataCleanup');
 const {
+  normalizeReactionEmoji,
+  parseReactionEmojis,
+} = require('./reactions');
+const {
   getRoom,
   canViewRoom,
   canAccessRoom,
@@ -91,6 +95,76 @@ function attachReplyInfo(db, messages) {  if (messages.length === 0) return mess
     }
 
     for (const field of REPLY_FIELDS) delete message[field];
+  }
+
+  return messages;
+}
+
+/**
+ * Groups raw reaction rows into the shape sent to clients:
+ * `[{ emoji, count, users: [{ id, login }] }]`.
+ */
+function buildReactionGroups(rows) {
+  const groups = new Map();
+
+  for (const row of rows) {
+    let group = groups.get(row.emoji);
+    if (!group) {
+      group = { emoji: row.emoji, users: [] };
+      groups.set(row.emoji, group);
+    }
+    group.users.push({ id: Number(row.user_id), login: row.login });
+  }
+
+  return [...groups.values()].map((group) => ({
+    emoji: group.emoji,
+    count: group.users.length,
+    users: group.users,
+  }));
+}
+
+function getMessageReactions(db, messageId) {
+  const rows = db
+    .prepare(
+      `SELECT mr.emoji, u.id AS user_id, u.login
+       FROM message_reactions mr
+       JOIN users u ON u.id = mr.user_id
+       WHERE mr.message_id = ?
+       ORDER BY mr.created_at ASC, mr.rowid ASC`
+    )
+    .all(messageId);
+  return buildReactionGroups(rows);
+}
+
+/**
+ * Adds a `reactions` array to every message. The same grouped shape is used by
+ * history responses, message creation/edit responses and WebSocket broadcasts,
+ * so clients do not need to reconcile different formats.
+ */
+function attachReactionInfo(db, messages) {
+  if (messages.length === 0) return messages;
+
+  const messageIds = [...new Set(messages.map((message) => Number(message.id)))];
+  const placeholders = messageIds.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT mr.message_id, mr.emoji, u.id AS user_id, u.login
+       FROM message_reactions mr
+       JOIN users u ON u.id = mr.user_id
+       WHERE mr.message_id IN (${placeholders})
+       ORDER BY mr.created_at ASC, mr.rowid ASC`
+    )
+    .all(...messageIds);
+
+  const byMessage = new Map();
+  for (const row of rows) {
+    const key = Number(row.message_id);
+    if (!byMessage.has(key)) byMessage.set(key, []);
+    byMessage.get(key).push(row);
+  }
+
+  for (const message of messages) {
+    message.reactions = buildReactionGroups(byMessage.get(Number(message.id)) || []);
   }
 
   return messages;
@@ -216,6 +290,7 @@ module.exports = function (fastify) {
     const first_unread_message_id = firstUnreadRow ? firstUnreadRow.first_unread_id : null;
 
     attachReplyInfo(db, groupedRows);
+    attachReactionInfo(db, groupedRows);
 
     return { messages: groupedRows, first_unread_message_id };
   });
@@ -337,6 +412,7 @@ module.exports = function (fastify) {
     delete fullMessage.file_size;
 
     attachReplyInfo(db, [fullMessage]);
+    attachReactionInfo(db, [fullMessage]);
 
     // Mark author's own message as read for them
     try {
@@ -558,6 +634,7 @@ module.exports = function (fastify) {
     ).run(updatedMsg.body, updatedMsg.login, messageId);
 
     attachReplyInfo(db, [fullUpdatedMessage]);
+    attachReactionInfo(db, [fullUpdatedMessage]);
 
     // Broadcast update to all room participants
     if (process.env.DEBUG_MODE === 'true') {
@@ -578,6 +655,84 @@ module.exports = function (fastify) {
     }
 
     return fullUpdatedMessage;
+  });
+
+  // Toggle an emoji reaction on a message. One row per user and emoji; posting
+  // the same emoji again removes it.
+  fastify.post('/api/rooms/:roomId/messages/:messageId/reactions', {
+    preHandler: [fastify.requireAuth],
+  }, async (request, reply) => {
+    const roomId = Number(request.params.roomId);
+    const messageId = Number(request.params.messageId);
+    const emoji = normalizeReactionEmoji(request.body?.emoji);
+
+    if (!emoji) {
+      return reply.code(400).send({ error: 'Invalid emoji' });
+    }
+
+    const room = getRoom(db, roomId);
+    if (!room) return reply.code(404).send({ error: 'Room not found' });
+    const accessDenied = denyRoomAccess(fastify, db, request, reply, room);
+    if (accessDenied) return accessDenied;
+
+    const message = db
+      .prepare('SELECT id, room_id FROM messages WHERE id = ?')
+      .get(messageId);
+    if (!message) return reply.code(404).send({ error: 'Message not found' });
+    if (Number(message.room_id) !== roomId) {
+      return reply.code(400).send({ error: 'Message does not belong to room' });
+    }
+
+    const palette = parseReactionEmojis(room.reaction_emojis);
+    const userId = request.session.userId;
+
+    const toggle = db.transaction(() => {
+      const existing = db
+        .prepare(
+          'SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?'
+        )
+        .get(messageId, userId, emoji);
+
+      if (existing) {
+        db.prepare(
+          'DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?'
+        ).run(messageId, userId, emoji);
+        return { added: false };
+      }
+
+      // Removed emojis can still be taken off an old reaction, but new ones
+      // must come from the palette configured for this room.
+      if (!palette.includes(emoji)) {
+        return { error: 'Emoji is not available in this room' };
+      }
+
+      db.prepare(
+        'INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)'
+      ).run(messageId, userId, emoji);
+      return { added: true };
+    });
+
+    const result = toggle();
+    if (result.error) {
+      return reply.code(400).send({ error: result.error });
+    }
+
+    const reactions = getMessageReactions(db, messageId);
+    const currentUser = fastify.getUser(userId);
+
+    if (fastify.broadcastRoom) {
+      fastify.broadcastRoom(roomId, {
+        type: 'reaction_updated',
+        messageId,
+        reactions,
+        userId,
+        login: currentUser?.login || String(userId),
+        emoji,
+        added: result.added,
+      });
+    }
+
+    return { ok: true, messageId, emoji, added: result.added, reactions };
   });
 
   // Endpoint to delete a message
