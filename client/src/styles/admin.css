@@ -837,12 +837,69 @@
 }
 
 .admin-permission-option input {
-  margin-top: 0.2rem;
+  margin-top: 0.15rem;
   accent-color: var(--accent);
+}
+
+/* The global input rule sets width: 100%, which makes a checkbox stretch and
+   pushes the text across half of the card. Draw a compact custom checkbox. */
+.admin-permission-option input[type='checkbox'] {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.admin-permission-option input[type='checkbox']::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  background: var(--text-on-accent);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+  transform: scale(0);
+  transition: transform 0.12s ease-in-out;
+}
+
+.admin-permission-option input[type='checkbox']:hover {
+  border-color: var(--accent);
+}
+
+.admin-permission-option input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.admin-permission-option input[type='checkbox']:checked::before {
+  transform: scale(1);
+}
+
+.admin-permission-option input[type='checkbox']:focus {
+  box-shadow: none;
+}
+
+.admin-permission-option input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.admin-permission-option input[type='checkbox']:disabled {
+  cursor: not-allowed;
 }
 
 .admin-permission-text {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 0.15rem;
   min-width: 0;
