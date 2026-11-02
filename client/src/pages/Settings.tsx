@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { profile } from '../api';
+import { canAccessAdminPanel } from '../api';
 import Marquee from '../components/Marquee';
 import { TabletBottomNav } from '../components/TabletBottomNav';
 import ConfirmModal from '../components/ConfirmModal';
@@ -139,7 +140,7 @@ export default function Settings() {
   }, [sectionTitle, mobilePanelOpen, goBackMobile, setSettingsChrome]);
 
   const pageClass = `settings-page page-content page-content--settings${mobilePanelOpen ? ' has-panel' : ''}`;
-  const showAdminTab = user?.role === 'owner' || user?.role === 'moderator';
+  const showAdminTab = canAccessAdminPanel(user);
 
   return (
     <>

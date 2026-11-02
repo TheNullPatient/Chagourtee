@@ -9,6 +9,7 @@
  */
 
 const PERMISSIONS = Object.freeze([
+  'manage_invites',
   'create_rooms',
   'delete_rooms',
   'edit_rooms',

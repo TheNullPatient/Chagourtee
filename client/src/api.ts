@@ -109,6 +109,7 @@ export type VersionInfo = {
 };
 
 export type Permission =
+  | 'manage_invites'
   | 'create_rooms'
   | 'delete_rooms'
   | 'edit_rooms'
@@ -116,6 +117,7 @@ export type Permission =
   | 'manage_permissions';
 
 export const ALL_PERMISSIONS: Permission[] = [
+  'manage_invites',
   'create_rooms',
   'delete_rooms',
   'edit_rooms',
@@ -130,6 +132,17 @@ export type User = {
   verified: boolean;
   permissions?: Permission[];
 };
+
+/**
+ * Whether the user should see a link to the admin panel. Owners always do;
+ * moderators only while they have at least one granted permission.
+ */
+export function canAccessAdminPanel(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.role === 'owner') return true;
+  if (user.role !== 'moderator') return false;
+  return (user.permissions?.length ?? 0) > 0;
+}
 
 // Fallback palette for rooms that have not customized their reactions.
 export const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];

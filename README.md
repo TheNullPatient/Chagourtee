@@ -19,7 +19,7 @@ Self-hosted messenger: the owner runs the server on their computer, creates invi
 - **User management**: Owner, moderator and member roles
 - **Security**: Authorization via sessions, password hashing
 - **Administration**: Control panel for creating rooms and invites
-- **Granular moderator permissions**: Owners can delegate room management, user management and permission management to individual moderators
+- **Granular moderator permissions**: Owners can delegate invite, room and user management to individual moderators; a moderator without any permission does not see the admin panel
 - **Message editing**: Ability to edit and delete own messages
 - **Message replies**: Quotes, jump to the original message and a notification for the replied-to user
 - **Message reactions**: Quick emoji reactions with a per-room palette configured by the owner, grouped counters and a jump to unseen reactions
@@ -335,7 +335,7 @@ npm run lint
 - `POST /api/rooms/:id/lock` – owner/moderator locks the room for everyone (drops all remembered passwords)
 - `GET /api/rooms/:id/messages`, `POST /api/rooms/:id/messages` – messages
 - `POST /api/rooms/:id/messages/:messageId/reactions` – toggle an emoji reaction from the room palette
-- `GET/POST/DELETE /api/invites` – invites
+- `GET/POST/DELETE /api/invites` – invites (requires `manage_invites`)
 - `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – manual verification
 - `GET /api/verification/comments` – saved comments of approved members
 - `GET/PUT /api/users/:id/permissions` – granular permission grants for a moderator
@@ -391,7 +391,7 @@ Backend built on Fastify using SQLite for data storage:
 - Creating and renaming rooms
 - Configuring room access level, password and the invite list
 - Choosing the emoji palette available for reactions in each room
-- Assigning granular permissions to moderators (rooms, users, permissions)
+- Assigning granular permissions to moderators (invites, rooms, users, permissions)
 - Managing all users (including assigning moderator roles)
 - Creating invites with restrictions
 - Verifying users manually or with one-time codes

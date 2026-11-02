@@ -109,10 +109,11 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 #### 4.1. Granular Moderator Permissions
 - [x] Add database schema for granular permissions
 - [x] Implement owner-only interface to assign permissions to moderators
-- [x] Create permission types: create_rooms, delete_rooms, edit_rooms, manage_users, manage_permissions
+- [x] Create permission types: manage_invites, create_rooms, delete_rooms, edit_rooms, manage_users, manage_permissions
 - [x] Add API endpoints for managing user permissions in [users.js](./server/src/users.js)
 - [x] Implement permission checks throughout the application
 - [x] Create UI for owners to modify individual moderator permissions
+- [x] Hide the admin panel for moderators when no permissions are granted
 
 #### 4.2. Room Access Levels
 - [x] Define four room access levels: Public, Closed (password), Private (hidden), Restricted (whitelist)

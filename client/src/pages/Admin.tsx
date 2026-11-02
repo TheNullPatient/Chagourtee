@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import type { Room, Invite, User, MediaStorageSettings, RoomAccessLevel, RoomUpdateInput, Permission } from '../api';
-import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media, DEFAULT_REACTION_EMOJIS, ALL_PERMISSIONS } from '../api';
+import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media, DEFAULT_REACTION_EMOJIS, ALL_PERMISSIONS, canAccessAdminPanel } from '../api';
 import { useServerName } from '../ServerNameContext';
 import { initializeWebSocket, addMessageHandler, removeMessageHandler, addOpenHandler, removeOpenHandler } from '../websocket';
 import { useToast } from '../ToastContext';
@@ -54,9 +55,11 @@ const ADMIN_OWNER_SECTIONS: { id: AdminSectionId; label: string }[] = [
   { id: 'users', label: 'Пользователи' },
 ];
 
-const ADMIN_MODERATOR_SECTIONS: { id: AdminSectionId; label: string }[] = [{ id: 'invites', label: 'Инвайты' }];
-
 const PERMISSION_LABELS: Record<Permission, { label: string; description: string }> = {
+  manage_invites: {
+    label: 'Управление инвайтами',
+    description: 'Создавать и удалять инвайты',
+  },
   create_rooms: {
     label: 'Создание комнат',
     description: 'Создавать новые комнаты',
@@ -81,6 +84,7 @@ const PERMISSION_LABELS: Record<Permission, { label: string; description: string
 
 export default function Admin() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { showToast } = useToast();
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -156,6 +160,7 @@ export default function Admin() {
       isOwner || Boolean(user?.permissions?.includes(permission)),
     [isOwner, user]
   );
+  const canManageInvites = can('manage_invites');
   const canManageRooms =
     can('create_rooms') || can('edit_rooms') || can('delete_rooms');
   const canManageUsers = can('manage_users') || can('manage_permissions');
@@ -181,9 +186,11 @@ export default function Admin() {
 
   const load = useCallback(async () => {
     try {
-      const tasks: Promise<unknown>[] = [
-        invitesApi.list().then((iRes) => setInvites(iRes.invites)),
-      ];
+      const tasks: Promise<unknown>[] = [];
+
+      if (isOwner || canManageInvites) {
+        tasks.push(invitesApi.list().then((iRes) => setInvites(iRes.invites)));
+      }
 
       if (isOwner || canManageRooms) {
         tasks.push(roomsApi.list().then((rRes) => setRooms(rRes.rooms)));
@@ -206,7 +213,7 @@ export default function Admin() {
     } catch (err) {
       showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка загрузки', 'error');
     }
-  }, [isOwner, canManageRooms, canManageUsers, showToast]);
+  }, [isOwner, canManageInvites, canManageRooms, canManageUsers, showToast]);
 
   const applyMediaStorageSettings = useCallback((data: MediaStorageSettings) => {
     setMediaStorageSettings(data);
@@ -286,11 +293,12 @@ export default function Admin() {
   const adminSections = useMemo(() => {
     if (isOwner) return ADMIN_OWNER_SECTIONS;
     if (user?.role !== 'moderator') return [];
-    const sections = [...ADMIN_MODERATOR_SECTIONS];
+    const sections: { id: AdminSectionId; label: string }[] = [];
+    if (canManageInvites) sections.push({ id: 'invites', label: 'Инвайты' });
     if (canManageRooms) sections.push({ id: 'rooms', label: 'Комнаты' });
     if (canManageUsers) sections.push({ id: 'users', label: 'Пользователи' });
     return sections;
-  }, [isOwner, user?.role, canManageRooms, canManageUsers]);
+  }, [isOwner, user?.role, canManageInvites, canManageRooms, canManageUsers]);
   const [activeSection, setActiveSection] = useState<AdminSectionId>('invites');
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const { setAdminChrome } = useAdminChrome();
@@ -314,6 +322,14 @@ export default function Admin() {
       setActiveSection(adminSections[0]?.id ?? 'invites');
     }
   }, [user?.role, activeSection, adminSections]);
+
+  // A moderator whose permissions were all revoked (or a member opening the
+  // URL directly) has nothing to do in the admin panel.
+  useEffect(() => {
+    if (!user) return;
+    if (canAccessAdminPanel(user)) return;
+    navigate('/chat', { replace: true });
+  }, [user, navigate]);
 
   useEffect(() => {
     setAdminChrome({
@@ -366,10 +382,11 @@ export default function Admin() {
           break;
 
         case 'invites_changed':
-          // Перезагружаем только инвайты
-          invitesApi.list()
-            .then(res => setInvites(res.invites))
-            .catch(() => {});
+          if (isOwner || canManageInvites) {
+            invitesApi.list()
+              .then(res => setInvites(res.invites))
+              .catch(() => {});
+          }
           break;
 
         case 'verification_codes_changed':
@@ -506,7 +523,7 @@ export default function Admin() {
       removeMessageHandler(handleWsMessage);
       removeOpenHandler(handleOpen);
     };
-  }, [user, isOwner, canManageRooms, canManageUsers, setRawNameLocal, applyMediaStorageSettings, load]);
+  }, [user, isOwner, canManageInvites, canManageRooms, canManageUsers, setRawNameLocal, applyMediaStorageSettings, load]);
 
   // Helper function for copying text to clipboard with fallback
   const copyToClipboard = async (text: string) => {
@@ -538,9 +555,13 @@ export default function Admin() {
     }
   };
 
-  // Functions for invites (available to both owners and moderators)
+  // Functions for invites
   async function createInvite(e: React.FormEvent) {
     e.preventDefault();
+    if (!canManageInvites) {
+      showToast('Недостаточно прав для управления инвайтами', 'error');
+      return;
+    }
     try {
       const inv = await invitesApi.create({
         maxUses: inviteOpts.maxUses ? Number(inviteOpts.maxUses) : undefined,
@@ -561,6 +582,10 @@ export default function Admin() {
 
 
   async function deleteInvite(id: string) {
+    if (!canManageInvites) {
+      showToast('Недостаточно прав для управления инвайтами', 'error');
+      return;
+    }
     try {
       await invitesApi.delete(id);
       await load();
@@ -1244,7 +1269,7 @@ export default function Admin() {
       <div className="admin-main">
         <div className="admin-main-heading-desktop">{adminSectionTitle}</div>
         <div className="admin-panel-inner">
-          {activeSection === 'invites' && (
+          {activeSection === 'invites' && (isOwner || canManageInvites) && (
             <div className="card">
         <h3 className="admin-card-title">
           <span className="icon-inline" aria-hidden>

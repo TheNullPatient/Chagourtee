@@ -19,6 +19,7 @@ const { getDb } = require('../src/db');
 const { plugin: authPlugin, authRoutes } = require('../src/auth');
 const usersPlugin = require('../src/users');
 const roomsPlugin = require('../src/rooms');
+const invitesPlugin = require('../src/invites');
 const { PERMISSIONS } = require('../src/permissions');
 
 test('granular moderator permissions gate admin endpoints', async () => {
@@ -50,6 +51,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
   app.decorate('broadcastRoomUpdated', () => {});
   app.decorate('broadcastRoomDeletion', () => {});
   app.decorate('broadcastRoomMessagesCleared', () => {});
+  app.decorate('broadcastInvitesChanged', () => {});
 
   await app.register(authPlugin);
   app.addHook('preHandler', async (request) => {
@@ -59,6 +61,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
   authRoutes(app, {}, () => {});
   usersPlugin(app);
   roomsPlugin(app);
+  invitesPlugin(app);
 
   async function request(method, url, userId, payload) {
     return app.inject({
@@ -132,8 +135,15 @@ test('granular moderator permissions gate admin endpoints', async () => {
       initial.body
     );
 
+    const deniedInvites = await request('GET', '/api/invites', moderator);
+    check(
+      'a moderator without manage_invites cannot list invites',
+      deniedInvites.statusCode === 403,
+      deniedInvites.body
+    );
+
     const grant = await request('PUT', `/api/users/${moderator}/permissions`, owner, {
-      permissions: ['create_rooms', 'edit_rooms', 'manage_users'],
+      permissions: ['manage_invites', 'create_rooms', 'edit_rooms', 'manage_users'],
     });
     check('the owner can grant permissions', grant.statusCode === 200, grant.body);
     check(
@@ -161,6 +171,31 @@ test('granular moderator permissions gate admin endpoints', async () => {
         me.json().permissions.includes('create_rooms') &&
         me.json().permissions.includes('manage_users'),
       me.body
+    );
+
+    const inviteList = await request('GET', '/api/invites', moderator);
+    check(
+      'manage_invites allows a moderator to list invites',
+      inviteList.statusCode === 200 && Array.isArray(inviteList.json().invites),
+      inviteList.body
+    );
+
+    const inviteCreated = await request('POST', '/api/invites', moderator, { maxUses: 1 });
+    check(
+      'manage_invites allows a moderator to create invites',
+      inviteCreated.statusCode === 200 && typeof inviteCreated.json().id === 'string',
+      inviteCreated.body
+    );
+
+    const inviteDeleted = await request(
+      'DELETE',
+      `/api/invites/${inviteCreated.json().id}`,
+      moderator
+    );
+    check(
+      'manage_invites allows a moderator to delete invites',
+      inviteDeleted.statusCode === 200,
+      inviteDeleted.body
     );
 
     const roomName = unique('r');
@@ -285,6 +320,13 @@ test('granular moderator permissions gate admin endpoints', async () => {
       'a demoted moderator loses the delegated permission',
       afterDemote.statusCode === 403,
       afterDemote.body
+    );
+
+    const invitesAfterDemote = await request('GET', '/api/invites', moderator);
+    check(
+      'a demoted moderator loses manage_invites',
+      invitesAfterDemote.statusCode === 403,
+      invitesAfterDemote.body
     );
   } finally {
     await app.close();

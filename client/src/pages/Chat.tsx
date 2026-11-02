@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import type { Room, Message, User, MessageListResponse, MediaFile, MediaUploadSettings, MessageReaction } from '../api';
-import { rooms as roomsApi, messages as messagesApi, users, media, DEFAULT_REACTION_EMOJIS } from '../api';
+import { rooms as roomsApi, messages as messagesApi, users, media, DEFAULT_REACTION_EMOJIS, canAccessAdminPanel } from '../api';
 import {
   getWebSocket,
   addMessageHandler,
@@ -2540,7 +2540,7 @@ export default function Chat() {
           ))}
         </div>
         {isTabletInRange && (
-          <TabletBottomNav showAdmin={user?.role === 'owner' || user?.role === 'moderator'} />
+          <TabletBottomNav showAdmin={canAccessAdminPanel(user)} />
         )}
       </div>
       <div className="chat-main">

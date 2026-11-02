@@ -2,6 +2,7 @@ import { Outlet, NavLink, useLocation, useParams, Link } from 'react-router-dom'
 import { useAuth } from './AuthContext';
 import { useState, useEffect } from 'react';
 import { rooms as roomsApi } from './api';
+import { canAccessAdminPanel } from './api';
 import { useServerName } from './ServerNameContext';
 import Marquee from './components/Marquee';
 import { useUserListPanel } from './UserListPanelContext';
@@ -229,7 +230,7 @@ function LayoutInner() {
             </span>
             Настройки
           </NavLink>
-          {(user?.role === 'owner' || user?.role === 'moderator') && (
+          {canAccessAdminPanel(user) && (
             <NavLink to="/admin" className={({ isActive }) => `layout-nav-link${isActive ? ' active' : ''}`}>
               <span className="icon-inline">
                 <IconAdmin />
@@ -281,7 +282,7 @@ function LayoutInner() {
             </span>
             Настройки
           </NavLink>
-          {(user?.role === 'owner' || user?.role === 'moderator') && (
+          {canAccessAdminPanel(user) && (
             <NavLink to="/admin" className={({ isActive }) => (isActive ? 'active' : '')}>
               <span className="icon-inline">
                 <IconAdmin />

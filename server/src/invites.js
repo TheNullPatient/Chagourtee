@@ -8,7 +8,7 @@ module.exports = function (fastify) {
   const db = fastify.db;
 
   fastify.get('/api/invites', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_invites')],
   }, async () => {
     const rows = db.prepare(`
       SELECT id, created_by, max_uses, uses_count, expires_at, created_at
@@ -19,7 +19,7 @@ module.exports = function (fastify) {
   });
 
   fastify.post('/api/invites', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_invites')],
   }, async (request, reply) => {
     const { maxUses, expiresInHours } = request.body || {};
     const id = generateInviteId();
@@ -43,7 +43,7 @@ module.exports = function (fastify) {
   });
 
   fastify.delete('/api/invites/:id', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_invites')],
   }, async (request, reply) => {
     const { id } = request.params;
     const r = db.prepare('DELETE FROM invites WHERE id = ?').run(id);
