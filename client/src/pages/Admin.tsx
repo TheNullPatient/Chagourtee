@@ -435,6 +435,14 @@ export default function Admin() {
           }
           break;
 
+        case 'verification_comments_changed':
+          if (isOwner || canManageVerification) {
+            verificationApi.comments()
+              .then(res => setSavedComments(res.comments))
+              .catch(() => {});
+          }
+          break;
+
         case 'media_settings_updated':
           if (isOwner || canManageMedia) {
             media.getStorageSettings()
@@ -1027,6 +1035,32 @@ export default function Admin() {
         try {
           await verificationApi.reject(userId);
           showToast('Пользователь отклонён', 'success');
+        } catch (err) {
+          showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка', 'error');
+        }
+      }
+    });
+  }
+
+  async function deleteSavedComment(item: SavedComment) {
+    if (!canManageVerification) {
+      showToast('Недостаточно прав для удаления комментариев', 'error');
+      return;
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Удалить сохранённый комментарий?',
+      message: `Комментарий пользователя «${item.login}» будет удалён безвозвратно.`,
+      confirmText: 'Удалить',
+      cancelText: 'Отмена',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        try {
+          await verificationApi.deleteComment(item.id);
+          setSavedComments((prev) => prev.filter((row) => row.id !== item.id));
+          showToast('Комментарий удалён', 'success');
         } catch (err) {
           showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка', 'error');
         }
@@ -1757,6 +1791,18 @@ export default function Admin() {
                         Подтверждён · {new Date(item.created_at).toLocaleDateString()}
                       </div>
                       <div className="admin-pending-comment-text">{item.registration_comment}</div>
+                    </div>
+                    <div className="admin-actions-row">
+                      <button
+                        type="button"
+                        className="danger admin-btn-grow"
+                        onClick={() => deleteSavedComment(item)}
+                      >
+                        <span className="icon-inline" aria-hidden>
+                          <IconTrash />
+                        </span>{' '}
+                        Удалить комментарий
+                      </button>
                     </div>
                   </div>
                 ))}

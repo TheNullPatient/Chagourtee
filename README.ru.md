@@ -338,9 +338,9 @@ npm run lint
 - `GET/POST/DELETE /api/invites` – инвайты (требуется `manage_invites`)
 - `POST /api/server/settings` – имя сервера (требуется `manage_server`)
 - `GET/POST /api/media/storage-settings` – лимиты и очистка медиа (требуется `manage_media`)
-- `GET/POST /api/verification/{settings,pending,comments,codes}` – управление верификацией (требуется `manage_verification`)
+- `GET/POST/DELETE /api/verification/{settings,pending,comments,codes}` – управление верификацией (требуется `manage_verification`)
 - `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – ручная верификация
-- `GET /api/verification/comments` – сохранённые комментарии подтверждённых участников
+- `GET /api/verification/comments`, `DELETE /api/verification/comments/:userId` – сохранённые комментарии подтверждённых участников
 - `GET/PUT /api/users/:id/permissions` – гранулярные права модератора
 - `GET/PATCH /api/profile/registration-comment` – комментарий ожидающего пользователя для владельца
 - `POST /api/profile/change-password`, `change-login` – профиль

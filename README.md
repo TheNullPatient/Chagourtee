@@ -338,9 +338,9 @@ npm run lint
 - `GET/POST/DELETE /api/invites` – invites (requires `manage_invites`)
 - `POST /api/server/settings` – server name (requires `manage_server`)
 - `GET/POST /api/media/storage-settings` – media limits and cleanup (requires `manage_media`)
-- `GET/POST /api/verification/{settings,pending,comments,codes}` – verification management (requires `manage_verification`)
+- `GET/POST/DELETE /api/verification/{settings,pending,comments,codes}` – verification management (requires `manage_verification`)
 - `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – manual verification
-- `GET /api/verification/comments` – saved comments of approved members
+- `GET /api/verification/comments`, `DELETE /api/verification/comments/:userId` – saved comments of approved members
 - `GET/PUT /api/users/:id/permissions` – granular permission grants for a moderator
 - `GET/PATCH /api/profile/registration-comment` – pending user's comment for the owner
 - `POST /api/profile/change-password`, `change-login` – profile

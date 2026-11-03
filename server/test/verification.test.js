@@ -210,6 +210,70 @@ test('verification codes are hashed, single-use and rate limited', async () => {
       memberComments.body
     );
 
+    const verificationModerator = seedUser(db, unique('v_mod'), { role: 'moderator' });
+    db.prepare(
+      'INSERT INTO user_permissions (user_id, permission) VALUES (?, ?)'
+    ).run(verificationModerator, 'manage_verification');
+
+    const memberDelete = await request(
+      'DELETE',
+      `/api/verification/comments/${approvedWithoutDeletion}`,
+      other
+    );
+    check(
+      'members cannot delete saved comments',
+      memberDelete.statusCode === 403,
+      memberDelete.body
+    );
+
+    const moderatorDelete = await request(
+      'DELETE',
+      `/api/verification/comments/${approvedWithoutDeletion}`,
+      verificationModerator
+    );
+    check(
+      'moderators with manage_verification can delete saved comments',
+      moderatorDelete.statusCode === 200,
+      moderatorDelete.body
+    );
+    check(
+      'deleting a saved comment clears it from the user',
+      db
+        .prepare('SELECT registration_comment FROM users WHERE id = ?')
+        .get(approvedWithoutDeletion).registration_comment === null
+    );
+    check(
+      'comment deletion is broadcast to open admin panels',
+      broadcasts.some(
+        (entry) =>
+          entry.target === 'all' &&
+          entry.payload.type === 'verification_comments_changed' &&
+          entry.payload.userId === approvedWithoutDeletion
+      ),
+      JSON.stringify(broadcasts)
+    );
+
+    const commentsAfterDelete = await request('GET', '/api/verification/comments', owner);
+    check(
+      'deleted comments disappear from the saved list',
+      commentsAfterDelete.statusCode === 200 &&
+        !commentsAfterDelete
+          .json()
+          .comments.some((row) => row.id === approvedWithoutDeletion),
+      commentsAfterDelete.body
+    );
+
+    const deleteAgain = await request(
+      'DELETE',
+      `/api/verification/comments/${approvedWithoutDeletion}`,
+      owner
+    );
+    check(
+      'deleting an already removed comment returns 404',
+      deleteAgain.statusCode === 404,
+      deleteAgain.body
+    );
+
     const unauthCreate = await request('POST', '/api/verification/codes', null, {
       code: 'ABC123',
     });

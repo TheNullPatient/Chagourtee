@@ -195,6 +195,34 @@ module.exports = function (fastify) {
     return { comments: rows };
   });
 
+  // Удаление сохранённого комментария подтверждённого участника.
+  fastify.delete('/api/verification/comments/:userId', {
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
+  }, async (request, reply) => {
+    const userId = Number(request.params.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return reply.code(400).send({ error: 'Invalid user id' });
+    }
+
+    const target = db
+      .prepare(
+        'SELECT id FROM users WHERE id = ? AND verified = 1 AND registration_comment IS NOT NULL'
+      )
+      .get(userId);
+    if (!target) {
+      return reply.code(404).send({ error: 'Saved comment not found' });
+    }
+
+    db.prepare('UPDATE users SET registration_comment = NULL WHERE id = ?').run(userId);
+
+    // Let other open admin panels drop the comment from their lists.
+    if (fastify.broadcastAll) {
+      fastify.broadcastAll({ type: 'verification_comments_changed', userId });
+    }
+
+    return { ok: true };
+  });
+
   // Одобрение пользователя (ручная верификация)
   fastify.post('/api/verification/approve', {
     preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
