@@ -11,6 +11,7 @@ useWorkspace(workspace);
 const Fastify = require('fastify');
 const { getDb } = require('../src/db');
 const verificationPlugin = require('../src/verification');
+const { hasPermission } = require('../src/permissions');
 
 test('verification codes are hashed, single-use and rate limited', async () => {
   const { check, verify } = createChecker();
@@ -59,6 +60,12 @@ test('verification codes are hashed, single-use and rate limited', async () => {
   app.decorate('requireOwner', async (request, reply) => {
     if (!authenticate(request, reply)) return;
     if (request.user.role !== 'owner') {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+  });
+  app.decorate('requirePermission', (permission) => async (request, reply) => {
+    if (!authenticate(request, reply)) return;
+    if (!hasPermission(db, request.user, permission)) {
       return reply.code(403).send({ error: 'Forbidden' });
     }
   });

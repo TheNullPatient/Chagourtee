@@ -1,5 +1,6 @@
 const { deleteUserData } = require('./dataCleanup');
 const {
+  DEFAULT_PERMISSIONS,
   clearUserPermissions,
   getEffectivePermissions,
   getUserPermissions,
@@ -75,10 +76,14 @@ module.exports = function (fastify) {
     
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, userId);
 
-    // Permissions only apply to moderators. Demoting or promoting resets the
-    // grants so a future moderator never inherits stale capabilities.
+    // Permissions only apply to moderators. Promotion applies the default set,
+    // while demotion clears everything so stale capabilities never linger.
     if (target.role !== role) {
-      clearUserPermissions(db, userId);
+      if (role === 'moderator') {
+        replaceUserPermissions(db, userId, DEFAULT_PERMISSIONS, request.user.id);
+      } else {
+        clearUserPermissions(db, userId);
+      }
     }
 
     // Реалтайм: уведомляем клиентов об изменении роли пользователя

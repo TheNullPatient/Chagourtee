@@ -20,6 +20,7 @@ const Fastify = require('fastify');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { getDb } = require('../src/db');
 const mediaPlugin = require('../src/media');
+const { hasPermission } = require('../src/permissions');
 
 const ffmpegPath = ffmpegInstaller.path;
 const ffmpegAvailable = Boolean(ffmpegPath) && fs.existsSync(ffmpegPath);
@@ -82,6 +83,14 @@ test(
       request.user = user;
     });
     app.decorate('requireOwner', app.requireAuth);
+    app.decorate('requirePermission', (permission) => async (request, reply) => {
+      const user = request.user || app.getUser(Number(request.headers['x-test-user']));
+      if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+      if (!hasPermission(db, user, permission)) {
+        return reply.code(403).send({ error: 'Forbidden' });
+      }
+      request.user = user;
+    });
     app.decorate('broadcastAll', () => {});
 
     async function upload(baseUrl, filePath, mimeType) {

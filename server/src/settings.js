@@ -9,9 +9,9 @@ module.exports = function (fastify) {
     };
   });
 
-  // Update server settings (only owner)
+  // Update server settings (requires manage_server)
   fastify.post('/api/server/settings', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_server')],
   }, async (request, reply) => {
     const { server_name } = request.body || {};
     

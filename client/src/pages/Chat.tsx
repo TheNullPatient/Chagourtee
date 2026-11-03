@@ -484,7 +484,8 @@ export default function Chat() {
   const typingLabel = formatTypingUsers(typingUsers);
   const typingVerb = typingUsers.length === 1 ? 'печатает' : 'печатают';
   const canJoinRoom = roomsLoaded && activeRoomId !== null && !activeRoomLocked;
-  const isPrivilegedUser = user?.role === 'owner' || user?.role === 'moderator';
+  const isPrivilegedUser =
+    user?.role === 'owner' || Boolean(user?.permissions?.includes('manage_rooms'));
   const roomReactionEmojis =
     activeRoom?.reaction_emojis && activeRoom.reaction_emojis.length > 0
       ? activeRoom.reaction_emojis

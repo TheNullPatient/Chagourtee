@@ -5,6 +5,7 @@ const {
   DEFAULT_REACTION_EMOJIS,
   serializeReactionEmojis,
 } = require('./reactions');
+const { initializeDefaultPermissionsForModerators } = require('./permissions');
 
 const DEFAULT_DB_PATH = path.join(process.cwd(), 'data', 'chagourtee.db');
 const DEFAULT_REACTION_EMOJIS_JSON = serializeReactionEmojis(DEFAULT_REACTION_EMOJIS);
@@ -42,6 +43,7 @@ function createDb(dbPath) {
       verified INTEGER NOT NULL DEFAULT 0,
       codeword_hash TEXT,
       registration_comment TEXT,
+      permissions_initialized INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -343,6 +345,27 @@ function createDb(dbPath) {
     if (!userColumns.includes('registration_comment')) {
       db.exec('ALTER TABLE users ADD COLUMN registration_comment TEXT');
     }
+    if (!userColumns.includes('permissions_initialized')) {
+      db.exec(
+        'ALTER TABLE users ADD COLUMN permissions_initialized INTEGER NOT NULL DEFAULT 0'
+      );
+    }
+
+    // Room management used to be split into create/edit/delete permissions.
+    // Collapse the old grants into a single manage_rooms permission.
+    const legacyRoomPermissions = "('create_rooms', 'delete_rooms', 'edit_rooms')";
+    db.transaction(() => {
+      db.prepare(
+        `INSERT OR IGNORE INTO user_permissions (user_id, permission, granted_by)
+         SELECT user_id, 'manage_rooms', NULL FROM user_permissions
+         WHERE permission IN ${legacyRoomPermissions}`
+      ).run();
+      db.prepare(
+        `DELETE FROM user_permissions WHERE permission IN ${legacyRoomPermissions}`
+      ).run();
+    })();
+
+    initializeDefaultPermissionsForModerators(db);
   } catch (e) {
     console.error('Failed to ensure users schema is up to date:', e);
   }

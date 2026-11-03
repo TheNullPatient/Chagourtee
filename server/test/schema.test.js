@@ -160,6 +160,10 @@ test('update-schema migrates an outdated database in place', () => {
       state.userColumns.includes('registration_comment')
     );
     check(
+      'adds users.permissions_initialized',
+      state.userColumns.includes('permissions_initialized')
+    );
+    check(
       'adds verification_settings.delete_comment_on_approve',
       state.verificationColumns.includes('delete_comment_on_approve')
     );

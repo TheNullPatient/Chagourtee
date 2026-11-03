@@ -780,7 +780,7 @@ async function mediaPlugin(fastify, options) {
     fastify.get(
         '/api/media/storage-settings',
         {
-            preHandler: [fastify.requireAuth, fastify.requireOwner],
+            preHandler: [fastify.requireAuth, fastify.requirePermission('manage_media')],
         },
         async () => {
             const usage = getCurrentStorageUsage();
@@ -801,7 +801,7 @@ async function mediaPlugin(fastify, options) {
     fastify.post(
         '/api/media/storage-settings',
         {
-            preHandler: [fastify.requireAuth, fastify.requireOwner],
+            preHandler: [fastify.requireAuth, fastify.requirePermission('manage_media')],
         },
         async (req, reply) => {
             const body = req.body || {};

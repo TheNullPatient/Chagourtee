@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import type { Room, Invite, User, MediaStorageSettings, RoomAccessLevel, RoomUpdateInput, Permission } from '../api';
-import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media, DEFAULT_REACTION_EMOJIS, ALL_PERMISSIONS, canAccessAdminPanel } from '../api';
+import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media, DEFAULT_REACTION_EMOJIS, ALL_PERMISSIONS, DEFAULT_PERMISSIONS, canAccessAdminPanel } from '../api';
 import { useServerName } from '../ServerNameContext';
 import { initializeWebSocket, addMessageHandler, removeMessageHandler, addOpenHandler, removeOpenHandler } from '../websocket';
 import { useToast } from '../ToastContext';
@@ -57,23 +57,27 @@ const ADMIN_OWNER_SECTIONS: { id: AdminSectionId; label: string }[] = [
 
 const PERMISSION_LABELS: Record<Permission, { label: string; description: string }> = {
   manage_invites: {
-    label: 'Управление инвайтами',
+    label: 'Инвайты',
     description: 'Создавать и удалять инвайты',
   },
-  create_rooms: {
-    label: 'Создание комнат',
-    description: 'Создавать новые комнаты',
+  manage_server: {
+    label: 'Имя сервера',
+    description: 'Изменять отображаемое имя сервера',
   },
-  delete_rooms: {
-    label: 'Удаление комнат',
-    description: 'Удалять комнаты вместе с сообщениями',
+  manage_media: {
+    label: 'Медиа-хранилище',
+    description: 'Настраивать лимиты и очистку медиа',
   },
-  edit_rooms: {
-    label: 'Редактирование комнат',
-    description: 'Переименовывать комнаты, настраивать доступ и реакции',
+  manage_rooms: {
+    label: 'Комнаты',
+    description: 'Создавать, изменять и удалять комнаты',
+  },
+  manage_verification: {
+    label: 'Верификация',
+    description: 'Подтверждать пользователей и управлять кодами',
   },
   manage_users: {
-    label: 'Управление пользователями',
+    label: 'Пользователи',
     description: 'Менять роли и удалять пользователей',
   },
   manage_permissions: {
@@ -161,9 +165,15 @@ export default function Admin() {
     [isOwner, user]
   );
   const canManageInvites = can('manage_invites');
-  const canManageRooms =
-    can('create_rooms') || can('edit_rooms') || can('delete_rooms');
-  const canManageUsers = can('manage_users') || can('manage_permissions');
+  const canManageServer = can('manage_server');
+  const canManageMedia = can('manage_media');
+  const canManageRooms = can('manage_rooms');
+  const canManageVerification = can('manage_verification');
+  const canManageUsers = can('manage_users');
+  const canManagePermissions = can('manage_permissions');
+  // The Users section also hosts the permission editor, so it stays visible
+  // for delegated permission managers even without manage_users.
+  const canSeeUsersSection = canManageUsers || canManagePermissions;
 
   const accessRoom = rooms.find((room) => room.id === accessRoomId) || null;
   const reactionsRoom = rooms.find((room) => room.id === reactionsRoomId) || null;
@@ -196,11 +206,11 @@ export default function Admin() {
         tasks.push(roomsApi.list().then((rRes) => setRooms(rRes.rooms)));
       }
 
-      if (isOwner || canManageUsers) {
+      if (isOwner || canSeeUsersSection) {
         tasks.push(usersApi.list().then((uRes) => setUsers(uRes.users)));
       }
 
-      if (isOwner) {
+      if (isOwner || canManageVerification) {
         tasks.push(verificationApi.pending().then((pRes) => setPending(pRes.pending)));
         tasks.push(
           verificationApi.comments()
@@ -213,7 +223,7 @@ export default function Admin() {
     } catch (err) {
       showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка загрузки', 'error');
     }
-  }, [isOwner, canManageInvites, canManageRooms, canManageUsers, showToast]);
+  }, [isOwner, canManageInvites, canManageRooms, canSeeUsersSection, canManageVerification, showToast]);
 
   const applyMediaStorageSettings = useCallback((data: MediaStorageSettings) => {
     setMediaStorageSettings(data);
@@ -250,9 +260,8 @@ export default function Admin() {
 
   useEffect(() => {
     if (user?.role !== 'owner' && user?.role !== 'moderator') return;
-    
-    // Load verification settings only for owners
-    if (user.role === 'owner') {
+
+    if (isOwner || canManageVerification) {
       verificationApi.settings()
         .then(data => {
           setVerificationEnabled(!!data.enabled);
@@ -260,28 +269,19 @@ export default function Admin() {
         })
         .catch(err => DEBUG_MODE && console.error('Error fetching verification settings:', err));
 
-      media.getStorageSettings()
-        .then(applyMediaStorageSettings)
-        .catch((err) => DEBUG_MODE && console.error('Error loading media storage settings:', err));
-      
-      // Load users
-      usersApi.list().then((data) => {
-        setUsers(data.users);
-      }).catch(err => DEBUG_MODE && console.error('Error loading users:', err));
-      
-      // Load pending verifications
-      verificationApi.pending().then((data) => {
-        setPending(data.pending);
-      }).catch(err => DEBUG_MODE && console.error('Error loading pending verifications:', err));
-      
-      // Load verification codes
       verificationApi.listCodes().then((data) => {
         setCodes(data.codes);
       }).catch(err => DEBUG_MODE && console.error('Error loading verification codes:', err));
     }
 
+    if (isOwner || canManageMedia) {
+      media.getStorageSettings()
+        .then(applyMediaStorageSettings)
+        .catch((err) => DEBUG_MODE && console.error('Error loading media storage settings:', err));
+    }
+
     load();
-  }, [user, load, applyMediaStorageSettings]);
+  }, [user, isOwner, canManageVerification, canManageMedia, load, applyMediaStorageSettings]);
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 678px) and (max-width: 876px)');
@@ -295,10 +295,22 @@ export default function Admin() {
     if (user?.role !== 'moderator') return [];
     const sections: { id: AdminSectionId; label: string }[] = [];
     if (canManageInvites) sections.push({ id: 'invites', label: 'Инвайты' });
+    if (canManageServer) sections.push({ id: 'server', label: 'Имя сервера' });
+    if (canManageMedia) sections.push({ id: 'media', label: 'Медиа-хранилище' });
     if (canManageRooms) sections.push({ id: 'rooms', label: 'Комнаты' });
-    if (canManageUsers) sections.push({ id: 'users', label: 'Пользователи' });
+    if (canManageVerification) sections.push({ id: 'verification', label: 'Верификация' });
+    if (canSeeUsersSection) sections.push({ id: 'users', label: 'Пользователи' });
     return sections;
-  }, [isOwner, user?.role, canManageInvites, canManageRooms, canManageUsers]);
+  }, [
+    isOwner,
+    user?.role,
+    canManageInvites,
+    canManageServer,
+    canManageMedia,
+    canManageRooms,
+    canManageVerification,
+    canSeeUsersSection,
+  ]);
   const [activeSection, setActiveSection] = useState<AdminSectionId>('invites');
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const { setAdminChrome } = useAdminChrome();
@@ -390,7 +402,7 @@ export default function Admin() {
           break;
 
         case 'verification_codes_changed':
-          if (user.role === 'owner') {
+          if (isOwner || canManageVerification) {
             verificationApi.listCodes()
               .then(res => setCodes(res.codes))
               .catch(() => {});
@@ -398,7 +410,7 @@ export default function Admin() {
           break;
 
         case 'verification_settings_updated':
-          if (user.role === 'owner') {
+          if (isOwner || canManageVerification) {
             // Новое поле settings предпочтительно, но поддерживаем и enabled
             const enabled = typeof data.enabled === 'boolean'
               ? data.enabled
@@ -412,7 +424,7 @@ export default function Admin() {
           break;
 
         case 'verification_pending_changed':
-          if (user.role === 'owner') {
+          if (isOwner || canManageVerification) {
             // Новый участник или изменённый комментарий заявки
             verificationApi.pending()
               .then(res => setPending(res.pending))
@@ -424,7 +436,7 @@ export default function Admin() {
           break;
 
         case 'media_settings_updated':
-          if (user.role === 'owner') {
+          if (isOwner || canManageMedia) {
             media.getStorageSettings()
               .then(applyMediaStorageSettings)
               .catch(() => {});
@@ -432,7 +444,7 @@ export default function Admin() {
           break;
 
         case 'media_usage_changed':
-          if (user.role === 'owner' && typeof data.totalBytes === 'number') {
+          if ((isOwner || canManageMedia) && typeof data.totalBytes === 'number') {
             setMediaStorageSettings(prev => prev ? {
               ...prev,
               totalBytes: data.totalBytes,
@@ -445,27 +457,14 @@ export default function Admin() {
         case 'user_updated':
         case 'user_verification_changed':
         case 'user_deleted_admin':
-          if (isOwner || canManageUsers) {
-            // Обновляем список пользователей и ожидающих
-            usersApi.list()
-              .then(res => setUsers(res.users))
-              .catch(() => {});
-            verificationApi.pending()
-              .then(res => setPending(res.pending))
-              .catch(() => {});
-            verificationApi.comments()
-              .then(res => setSavedComments(res.comments))
-              .catch(() => {});
-          }
-          break;
-
         case 'user_verified':
         case 'user_rejected':
-          if (isOwner || canManageUsers) {
-            // Эти события уже приходят конкретному пользователю, но для админки обновим списки
+          if (isOwner || canSeeUsersSection) {
             usersApi.list()
               .then(res => setUsers(res.users))
               .catch(() => {});
+          }
+          if (isOwner || canManageVerification) {
             verificationApi.pending()
               .then(res => setPending(res.pending))
               .catch(() => {});
@@ -484,7 +483,7 @@ export default function Admin() {
           break;
 
         case 'server_settings_updated':
-          if (user.role === 'owner' && data.settings) {
+          if ((isOwner || canManageServer) && data.settings) {
             const name = data.settings.server_name ?? null;
             setRawNameLocal(name);
             setServerNameInput(name ?? '');
@@ -502,18 +501,20 @@ export default function Admin() {
     const handleOpen = () => {
       // Catch up on changes made while the socket was down.
       void load();
-      if (user.role === 'owner') {
+      if (isOwner || canManageVerification) {
         verificationApi.settings()
           .then(data => {
             setVerificationEnabled(!!data.enabled);
             setDeleteCommentOnApprove(!!data.deleteCommentOnApprove);
           })
           .catch(() => {});
-        media.getStorageSettings()
-          .then(applyMediaStorageSettings)
-          .catch(() => {});
         verificationApi.listCodes()
           .then(res => setCodes(res.codes))
+          .catch(() => {});
+      }
+      if (isOwner || canManageMedia) {
+        media.getStorageSettings()
+          .then(applyMediaStorageSettings)
           .catch(() => {});
       }
     };
@@ -523,7 +524,19 @@ export default function Admin() {
       removeMessageHandler(handleWsMessage);
       removeOpenHandler(handleOpen);
     };
-  }, [user, isOwner, canManageInvites, canManageRooms, canManageUsers, setRawNameLocal, applyMediaStorageSettings, load]);
+  }, [
+    user,
+    isOwner,
+    canManageInvites,
+    canManageServer,
+    canManageMedia,
+    canManageRooms,
+    canManageVerification,
+    canSeeUsersSection,
+    setRawNameLocal,
+    applyMediaStorageSettings,
+    load,
+  ]);
 
   // Helper function for copying text to clipboard with fallback
   const copyToClipboard = async (text: string) => {
@@ -595,10 +608,10 @@ export default function Admin() {
     }
   }
 
-  // Functions for other sections (only for owners)
+  // Functions for other sections (guarded by granular permissions)
   async function createRoom(e?: React.FormEvent) {
     if (e) e.preventDefault();
-    if (!can('create_rooms')) {
+    if (!canManageRooms) {
       showToast('Недостаточно прав для создания комнат', 'error');
       return;
     }
@@ -636,7 +649,7 @@ export default function Admin() {
   }
 
   async function openRoomAccess(room: Room) {
-    if (!can('edit_rooms')) {
+    if (!canManageRooms) {
       showToast('Недостаточно прав для изменения доступа', 'error');
       return;
     }
@@ -664,7 +677,7 @@ export default function Admin() {
   }
 
   function openReactionSettings(room: Room) {
-    if (!can('edit_rooms')) {
+    if (!canManageRooms) {
       showToast('Недостаточно прав для настройки реакций', 'error');
       return;
     }
@@ -684,7 +697,7 @@ export default function Admin() {
   }
 
   async function openPermissions(target: User) {
-    if (!can('manage_permissions')) return;
+    if (!canManagePermissions) return;
     setPermissionsUserId(target.id);
     setPermissionsDraft(target.permissions ?? []);
     setPermissionsLoading(true);
@@ -717,6 +730,10 @@ export default function Admin() {
 
   async function savePermissions() {
     if (permissionsUserId === null) return;
+    if (!canManagePermissions) {
+      showToast('Недостаточно прав для управления правами', 'error');
+      return;
+    }
     if (!isOwner && permissionsUserId === user?.id) {
       showToast('Нельзя изменять собственные права', 'error');
       return;
@@ -741,7 +758,7 @@ export default function Admin() {
 
   async function saveReactionSettings() {
     if (reactionsRoomId === null) return;
-    if (!can('edit_rooms')) {
+    if (!canManageRooms) {
       showToast('Недостаточно прав для настройки реакций', 'error');
       return;
     }
@@ -777,7 +794,7 @@ export default function Admin() {
 
   async function saveRoomAccess() {
     if (accessRoomId === null) return;
-    if (!can('edit_rooms')) {
+    if (!canManageRooms) {
       showToast('Недостаточно прав для изменения комнат', 'error');
       return;
     }
@@ -815,8 +832,8 @@ export default function Admin() {
   }
 
   async function saveServerName(e: React.FormEvent) {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может изменять имя сервера', 'error');
+    if (!canManageServer) {
+      showToast('Недостаточно прав для изменения имени сервера', 'error');
       return;
     }
     
@@ -843,8 +860,8 @@ export default function Admin() {
 
   async function saveMediaStorageSettings(e: React.FormEvent) {
     e.preventDefault();
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может изменять настройки хранилища', 'error');
+    if (!canManageMedia) {
+      showToast('Недостаточно прав для изменения настроек хранилища', 'error');
       return;
     }
 
@@ -928,7 +945,7 @@ export default function Admin() {
   }
 
   async function deleteRoom(id: number) {
-    if (!can('delete_rooms')) {
+    if (!canManageRooms) {
       showToast('Недостаточно прав для удаления комнат', 'error');
       return;
     }
@@ -953,7 +970,7 @@ export default function Admin() {
   }
 
   async function clearRoomMessages(id: number) {
-    if (!can('edit_rooms')) {
+    if (!canManageRooms) {
       showToast('Недостаточно прав для очистки сообщений', 'error');
       return;
     }
@@ -978,8 +995,8 @@ export default function Admin() {
   }
 
   async function approve(userId: number) {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может верифицировать пользователей', 'error');
+    if (!canManageVerification) {
+      showToast('Недостаточно прав для верификации пользователей', 'error');
       return;
     }
     
@@ -993,8 +1010,8 @@ export default function Admin() {
   }
 
   async function reject(userId: number) {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может отклонять пользователей', 'error');
+    if (!canManageVerification) {
+      showToast('Недостаточно прав для отклонения пользователей', 'error');
       return;
     }
 
@@ -1008,7 +1025,7 @@ export default function Admin() {
       onConfirm: async () => {
         setConfirmModal((prev) => ({ ...prev, isOpen: false }));
         try {
-          await usersApi.delete(userId, 'Ваша заявка на верификацию была отклонена');
+          await verificationApi.reject(userId);
           showToast('Пользователь отклонён', 'success');
         } catch (err) {
           showToast(err instanceof Error ? translateErrorMessage(err.message) : 'Ошибка', 'error');
@@ -1018,7 +1035,7 @@ export default function Admin() {
   }
 
   async function changeUserRole(userId: number, role: 'owner' | 'moderator' | 'member') {
-    if (!can('manage_users')) {
+    if (!canManageUsers) {
       showToast('Недостаточно прав для изменения ролей', 'error');
       return;
     }
@@ -1033,8 +1050,8 @@ export default function Admin() {
   }
 
   const handleVerificationToggle = () => {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может изменять настройки верификации', 'error');
+    if (!canManageVerification) {
+      showToast('Недостаточно прав для изменения настроек верификации', 'error');
       return;
     }
 
@@ -1087,8 +1104,8 @@ export default function Admin() {
   };
 
   const handleCommentDeletionToggle = async () => {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может изменять настройки верификации', 'error');
+    if (!canManageVerification) {
+      showToast('Недостаточно прав для изменения настроек верификации', 'error');
       return;
     }
 
@@ -1110,8 +1127,8 @@ export default function Admin() {
   };
 
   const createVerificationCode = async () => {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может создавать коды верификации', 'error');
+    if (!canManageVerification) {
+      showToast('Недостаточно прав для создания кодов верификации', 'error');
       return;
     }
     
@@ -1142,8 +1159,8 @@ export default function Admin() {
 
 
   const deleteVerificationCode = async (id: number) => {
-    if (user?.role !== 'owner') {
-      showToast('Только владелец может удалять коды верификации', 'error');
+    if (!canManageVerification) {
+      showToast('Недостаточно прав для удаления кодов верификации', 'error');
       return;
     }
     
@@ -1163,7 +1180,7 @@ export default function Admin() {
 
   // Add a new function to handle user deletion with reason
   const handleDeleteUserWithReason = async (userId: number) => {
-    if (!can('manage_users')) {
+    if (!canManageUsers) {
       showToast('Недостаточно прав для удаления пользователей', 'error');
       return;
     }
@@ -1174,7 +1191,7 @@ export default function Admin() {
 
   // Add a new function to confirm user deletion with reason
   const confirmDeleteUser = async () => {
-    if (!can('manage_users')) {
+    if (!canManageUsers) {
       showToast('Недостаточно прав для удаления пользователей', 'error');
       setDeletingUserId(null);
       return;
@@ -1221,7 +1238,7 @@ export default function Admin() {
   };
 
   async function renameRoom(id: number, name: string) {
-    if (!can('edit_rooms')) {
+    if (!canManageRooms) {
       showToast('Недостаточно прав для переименования комнат', 'error');
       return;
     }
@@ -1334,7 +1351,7 @@ export default function Admin() {
             </div>
           )}
 
-          {activeSection === 'server' && user?.role === 'owner' && (
+          {activeSection === 'server' && (isOwner || canManageServer) && (
           <div className="card">
             <h3 className="admin-card-title">
               <span className="icon-inline" aria-hidden>
@@ -1363,7 +1380,7 @@ export default function Admin() {
           </div>
           )}
 
-          {activeSection === 'media' && user?.role === 'owner' && (
+          {activeSection === 'media' && (isOwner || canManageMedia) && (
           <div className="card">
             <h3 className="admin-card-title">
               <span className="icon-inline" aria-hidden>
@@ -1510,7 +1527,7 @@ export default function Admin() {
               onClick={() => { setNewRoomNameInput(''); setShowCreateRoomModal(true); }}
               className="admin-btn-create-room"
               title="Создать комнату"
-              disabled={!can('create_rooms')}
+              disabled={!canManageRooms}
             >
               <span className="icon-inline" aria-hidden>
                 <IconPlus />
@@ -1552,7 +1569,7 @@ export default function Admin() {
                       </span>
                     </div>
                     <div className="admin-room-actions">
-                      {can('edit_rooms') && (
+                      {canManageRooms && (
                         <button
                           type="button"
                           onClick={() => openReactionSettings(r)}
@@ -1565,7 +1582,7 @@ export default function Admin() {
                         </button>
                       )}
                       {r.name === 'main' ? (
-                        can('edit_rooms') && (
+                        canManageRooms && (
                           <button
                             type="button"
                             onClick={() => clearRoomMessages(r.id)}
@@ -1579,7 +1596,7 @@ export default function Admin() {
                         )
                       ) : (
                         <>
-                          {can('edit_rooms') && (
+                          {canManageRooms && (
                             <>
                               <button
                                 type="button"
@@ -1603,7 +1620,7 @@ export default function Admin() {
                               </button>
                             </>
                           )}
-                          {can('delete_rooms') && (
+                          {canManageRooms && (
                             <button
                               type="button"
                               className="admin-btn-room admin-btn-room--danger danger"
@@ -1625,7 +1642,7 @@ export default function Admin() {
           </div>
           )}
 
-      {activeSection === 'verification' && user?.role === 'owner' && (
+      {activeSection === 'verification' && (isOwner || canManageVerification) && (
         <>
           <div className="card">
             <h3 className="admin-card-title">
@@ -1815,7 +1832,7 @@ export default function Admin() {
         </>
       )}
 
-          {activeSection === 'users' && (isOwner || canManageUsers) && (
+          {activeSection === 'users' && (isOwner || canSeeUsersSection) && (
           <div className="card">
             <h3 className="admin-card-title">
               <span className="icon-inline" aria-hidden>
@@ -1857,14 +1874,14 @@ export default function Admin() {
                       <select
                         value={u.role}
                         onChange={(e) => changeUserRole(u.id, e.target.value as 'owner' | 'moderator' | 'member')}
-                        disabled={u.role === 'owner' || !can('manage_users')}
+                        disabled={u.role === 'owner' || !canManageUsers}
                         className="admin-user-role-select"
                       >
                         <option value="owner">Владелец</option>
                         <option value="moderator">Модератор</option>
                         <option value="member">Участник</option>
                       </select>
-                      {u.role === 'moderator' && can('manage_permissions') && (
+                      {u.role === 'moderator' && canManagePermissions && (
                         <button
                           type="button"
                           className="admin-user-permissions-btn"
@@ -1876,7 +1893,7 @@ export default function Admin() {
                           Права
                         </button>
                       )}
-                      {u.role !== 'owner' && can('manage_users') && (
+                      {u.role !== 'owner' && canManageUsers && (
                         <button
                           type="button"
                           className="danger admin-user-delete"
@@ -1890,7 +1907,7 @@ export default function Admin() {
                       )}
                     </div>
 
-                    {isOwner && !u.verified && u.role === 'member' && verificationEnabled && (
+                    {(isOwner || canManageVerification) && !u.verified && u.role === 'member' && verificationEnabled && (
                       <div className="admin-user-verify-row">
                         <button type="button" onClick={() => approve(u.id)} className="admin-btn-grow">
                           Подтвердить
@@ -1911,7 +1928,7 @@ export default function Admin() {
       </div>
       
       {/* Add the modal for deletion reason if needed */}
-      {deletingUserId !== null && can('manage_users') && (
+      {deletingUserId !== null && canManageUsers && (
         <div className="admin-modal-overlay">
           <div className="admin-modal-dialog">
             <h3 className="admin-modal-title">Причина удаления</h3>
@@ -2234,6 +2251,11 @@ export default function Admin() {
                 собственные права.
               </p>
             )}
+
+            <p className="admin-field-hint">
+              По умолчанию модератор получает:{' '}
+              {DEFAULT_PERMISSIONS.map((permission) => PERMISSION_LABELS[permission].label).join(', ')}.
+            </p>
 
             <div className="admin-modal-actions">
               <button type="button" className="secondary" onClick={closePermissions}>

@@ -78,7 +78,7 @@ module.exports = function (fastify) {
 
   // Проверяем, включена ли система верификации
   fastify.get('/api/verification/settings', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async () => {
     const setting = db.prepare('SELECT enabled, delete_comment_on_approve FROM verification_settings LIMIT 1').get();
     return {
@@ -89,7 +89,7 @@ module.exports = function (fastify) {
 
   // Включить/выключить систему верификации
   fastify.post('/api/verification/settings', {
-    preHandler: [fastify.requireAuth, fastify.requireOwner],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async (request, reply) => {
     const { enabled, deleteCommentOnApprove } = request.body || {};
     if (enabled !== undefined && typeof enabled !== 'boolean') {
@@ -164,7 +164,7 @@ module.exports = function (fastify) {
 
   // Получить список ожидающих верификации пользователей
   fastify.get('/api/verification/pending', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async () => {
     const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
     if (!setting || !setting.enabled) {
@@ -184,7 +184,7 @@ module.exports = function (fastify) {
   // Сохранённые комментарии подтверждённых участников. Доступны только
   // владельцу и модераторам, чтобы не раскрывать их всем пользователям.
   fastify.get('/api/verification/comments', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async () => {
     const rows = db.prepare(`
       SELECT id, login, verified, created_at, registration_comment
@@ -197,7 +197,7 @@ module.exports = function (fastify) {
 
   // Одобрение пользователя (ручная верификация)
   fastify.post('/api/verification/approve', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async (request, reply) => {
     const setting = db
       .prepare('SELECT delete_comment_on_approve FROM verification_settings LIMIT 1')
@@ -237,7 +237,7 @@ module.exports = function (fastify) {
 
   // Отклонение пользователя
   fastify.post('/api/verification/reject', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async (request, reply) => {
     const { userId } = request.body || {};
     if (!userId) return reply.code(400).send({ error: 'userId required' });
@@ -272,7 +272,7 @@ module.exports = function (fastify) {
 
   // Создание одноразового кода верификации
   fastify.post('/api/verification/codes', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async (request, reply) => {
     const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
     if (!setting || !setting.enabled) {
@@ -335,7 +335,7 @@ module.exports = function (fastify) {
 
   // Получение списка одноразовых кодов верификации
   fastify.get('/api/verification/codes', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async (request, reply) => {
     const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
     if (!setting || !setting.enabled) {
@@ -457,7 +457,7 @@ module.exports = function (fastify) {
 
   // Удаление одноразового кода верификации
   fastify.delete('/api/verification/codes/:id', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async (request, reply) => {
     const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
     if (!setting || !setting.enabled) {
@@ -480,7 +480,7 @@ module.exports = function (fastify) {
   
   // Обновление одноразового кода верификации (пока только продление срока действия)
   fastify.patch('/api/verification/codes/:id', {
-    preHandler: [fastify.requireAuth, fastify.requireOwnerOrModerator],
+    preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async (request, reply) => {
     const setting = db.prepare('SELECT enabled FROM verification_settings LIMIT 1').get();
     if (!setting || !setting.enabled) {

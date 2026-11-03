@@ -110,19 +110,27 @@ export type VersionInfo = {
 
 export type Permission =
   | 'manage_invites'
-  | 'create_rooms'
-  | 'delete_rooms'
-  | 'edit_rooms'
+  | 'manage_server'
+  | 'manage_media'
+  | 'manage_rooms'
+  | 'manage_verification'
   | 'manage_users'
   | 'manage_permissions';
 
 export const ALL_PERMISSIONS: Permission[] = [
   'manage_invites',
-  'create_rooms',
-  'delete_rooms',
-  'edit_rooms',
+  'manage_server',
+  'manage_media',
+  'manage_rooms',
+  'manage_verification',
   'manage_users',
   'manage_permissions',
+];
+
+export const DEFAULT_PERMISSIONS: Permission[] = [
+  'manage_invites',
+  'manage_rooms',
+  'manage_verification',
 ];
 
 export type User = {

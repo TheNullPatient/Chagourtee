@@ -18,6 +18,7 @@ useWorkspace(workspace);
 const Fastify = require('fastify');
 const { getDb } = require('../src/db');
 const mediaPlugin = require('../src/media');
+const { hasPermission } = require('../src/permissions');
 
 test('media uploads, downloads and quotas', async () => {
   const { check, verify } = createChecker();
@@ -36,6 +37,14 @@ test('media uploads, downloads and quotas', async () => {
     request.user = user;
   });
   app.decorate('requireOwner', app.requireAuth);
+  app.decorate('requirePermission', (permission) => async (request, reply) => {
+    const user = request.user || app.getUser(Number(request.headers['x-test-user']));
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+    if (!hasPermission(db, user, permission)) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    request.user = user;
+  });
   const broadcastEvents = [];
   app.decorate('broadcastAll', (payload) => {
     broadcastEvents.push(payload);

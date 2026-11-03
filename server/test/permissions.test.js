@@ -20,7 +20,9 @@ const { plugin: authPlugin, authRoutes } = require('../src/auth');
 const usersPlugin = require('../src/users');
 const roomsPlugin = require('../src/rooms');
 const invitesPlugin = require('../src/invites');
-const { PERMISSIONS } = require('../src/permissions');
+const settingsPlugin = require('../src/settings');
+const verificationPlugin = require('../src/verification');
+const { PERMISSIONS, DEFAULT_PERMISSIONS } = require('../src/permissions');
 
 test('granular moderator permissions gate admin endpoints', async () => {
   const { check, verify } = createChecker();
@@ -30,6 +32,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
   const moderator = seedUser(db, unique('px_moderator'), { role: 'moderator' });
   const secondModerator = seedUser(db, unique('px_moderator_b'), { role: 'moderator' });
   const member = seedUser(db, unique('px_member'));
+  const promotee = seedUser(db, unique('px_promotee'));
   const disposable = seedUser(db, unique('px_disposable'));
 
   const permissionEvents = [];
@@ -52,6 +55,10 @@ test('granular moderator permissions gate admin endpoints', async () => {
   app.decorate('broadcastRoomDeletion', () => {});
   app.decorate('broadcastRoomMessagesCleared', () => {});
   app.decorate('broadcastInvitesChanged', () => {});
+  app.decorate('broadcastServerSettingsUpdated', () => {});
+  app.decorate('broadcastToUser', () => {});
+  app.decorate('broadcastVerificationSettingsUpdated', () => {});
+  app.decorate('broadcastVerificationCodesChanged', () => {});
 
   await app.register(authPlugin);
   app.addHook('preHandler', async (request) => {
@@ -62,6 +69,8 @@ test('granular moderator permissions gate admin endpoints', async () => {
   usersPlugin(app);
   roomsPlugin(app);
   invitesPlugin(app);
+  settingsPlugin(app);
+  verificationPlugin(app);
 
   async function request(method, url, userId, payload) {
     return app.inject({
@@ -72,6 +81,14 @@ test('granular moderator permissions gate admin endpoints', async () => {
         : { 'content-type': 'application/json' },
       payload,
     });
+  }
+
+  function samePermissions(actual, expected) {
+    return (
+      Array.isArray(actual) &&
+      actual.length === expected.length &&
+      expected.every((permission) => actual.includes(permission))
+    );
   }
 
   try {
@@ -90,14 +107,43 @@ test('granular moderator permissions gate admin endpoints', async () => {
     );
     check(
       'a fresh moderator has no permissions',
-      moderatorRow && Array.isArray(moderatorRow.permissions) && moderatorRow.permissions.length === 0,
+      moderatorRow &&
+        Array.isArray(moderatorRow.permissions) &&
+        moderatorRow.permissions.length === 0,
       ownerList.body
     );
 
     const deniedCreate = await request('POST', '/api/rooms', moderator, {
       name: unique('px_room_denied'),
     });
-    check('a moderator without create_rooms cannot create rooms', deniedCreate.statusCode === 403, deniedCreate.body);
+    check(
+      'a moderator without manage_rooms cannot create rooms',
+      deniedCreate.statusCode === 403,
+      deniedCreate.body
+    );
+
+    const deniedInvites = await request('GET', '/api/invites', moderator);
+    check(
+      'a moderator without manage_invites cannot list invites',
+      deniedInvites.statusCode === 403,
+      deniedInvites.body
+    );
+
+    const deniedServer = await request('POST', '/api/server/settings', moderator, {
+      server_name: 'denied',
+    });
+    check(
+      'a moderator without manage_server cannot rename the server',
+      deniedServer.statusCode === 403,
+      deniedServer.body
+    );
+
+    const deniedVerification = await request('GET', '/api/verification/pending', moderator);
+    check(
+      'a moderator without manage_verification cannot moderate accounts',
+      deniedVerification.statusCode === 403,
+      deniedVerification.body
+    );
 
     const deniedUsers = await request('GET', '/api/users', member);
     check(
@@ -113,7 +159,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
     check('unknown permissions are rejected', unknownPermission.statusCode === 400, unknownPermission.body);
 
     const memberTarget = await request('PUT', `/api/users/${member}/permissions`, owner, {
-      permissions: ['create_rooms'],
+      permissions: ['manage_rooms'],
     });
     check(
       'permissions can only be assigned to moderators',
@@ -135,22 +181,39 @@ test('granular moderator permissions gate admin endpoints', async () => {
       initial.body
     );
 
-    const deniedInvites = await request('GET', '/api/invites', moderator);
+    const promote = await request('PATCH', `/api/users/${promotee}/role`, owner, {
+      role: 'moderator',
+    });
+    check('the owner can promote a member to moderator', promote.statusCode === 200, promote.body);
+    const promotedPermissions = await request(
+      'GET',
+      `/api/users/${promotee}/permissions`,
+      owner
+    );
     check(
-      'a moderator without manage_invites cannot list invites',
-      deniedInvites.statusCode === 403,
-      deniedInvites.body
+      'promotion applies the default permissions',
+      promotedPermissions.statusCode === 200 &&
+        samePermissions(promotedPermissions.json().permissions, DEFAULT_PERMISSIONS),
+      promotedPermissions.body
     );
 
     const grant = await request('PUT', `/api/users/${moderator}/permissions`, owner, {
-      permissions: ['manage_invites', 'create_rooms', 'edit_rooms', 'manage_users'],
+      permissions: [
+        'manage_invites',
+        'manage_rooms',
+        'manage_users',
+        'manage_server',
+        'manage_verification',
+      ],
     });
     check('the owner can grant permissions', grant.statusCode === 200, grant.body);
     check(
       'the grant response lists effective permissions',
-      grant.json().permissions.includes('create_rooms') &&
-        grant.json().permissions.includes('edit_rooms') &&
-        grant.json().permissions.includes('manage_users'),
+      grant.json().permissions.includes('manage_invites') &&
+        grant.json().permissions.includes('manage_rooms') &&
+        grant.json().permissions.includes('manage_users') &&
+        grant.json().permissions.includes('manage_server') &&
+        grant.json().permissions.includes('manage_verification'),
       grant.body
     );
     check(
@@ -159,7 +222,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
         (event) =>
           event.type === 'user_permissions_changed' &&
           event.userId === moderator &&
-          event.permissions.includes('create_rooms')
+          event.permissions.includes('manage_rooms')
       ),
       JSON.stringify(permissionEvents)
     );
@@ -168,7 +231,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
     check(
       'the current-user endpoint exposes effective permissions',
       me.statusCode === 200 &&
-        me.json().permissions.includes('create_rooms') &&
+        me.json().permissions.includes('manage_rooms') &&
         me.json().permissions.includes('manage_users'),
       me.body
     );
@@ -200,28 +263,52 @@ test('granular moderator permissions gate admin endpoints', async () => {
 
     const roomName = unique('r');
     const created = await request('POST', '/api/rooms', moderator, { name: roomName });
-    check('create_rooms allows a moderator to create a room', created.statusCode === 200, created.body);
+    check('manage_rooms allows a moderator to create a room', created.statusCode === 200, created.body);
     const roomId = created.json().id;
 
     const renamed = await request('PATCH', `/api/rooms/${roomId}`, moderator, {
       name: unique('r2'),
     });
-    check('edit_rooms allows a moderator to edit a room', renamed.statusCode === 200, renamed.body);
+    check('manage_rooms allows a moderator to edit a room', renamed.statusCode === 200, renamed.body);
 
     const members = await request('GET', `/api/rooms/${roomId}/members`, moderator);
-    check('edit_rooms allows reading the room access list', members.statusCode === 200, members.body);
+    check('manage_rooms allows reading the room access list', members.statusCode === 200, members.body);
 
-    const deniedDeleteRoom = await request('DELETE', `/api/rooms/${roomId}`, moderator);
-    check('delete_rooms is required to delete a room', deniedDeleteRoom.statusCode === 403, deniedDeleteRoom.body);
-
-    const promote = await request('PATCH', `/api/users/${member}/role`, moderator, { role: 'moderator' });
+    const cleared = await request('DELETE', `/api/rooms/${roomId}/messages`, moderator);
     check(
-      'delegated managers still cannot promote users to moderator',
-      promote.statusCode === 403,
-      promote.body
+      'manage_rooms allows clearing room messages',
+      cleared.statusCode === 200,
+      cleared.body
     );
 
-    const keepMember = await request('PATCH', `/api/users/${member}/role`, moderator, { role: 'member' });
+    const renamedServer = await request('POST', '/api/server/settings', moderator, {
+      server_name: 'Managed server',
+    });
+    check(
+      'manage_server allows a moderator to rename the server',
+      renamedServer.statusCode === 200,
+      renamedServer.body
+    );
+
+    const pendingAccounts = await request('GET', '/api/verification/pending', moderator);
+    check(
+      'manage_verification allows a moderator to view pending accounts',
+      pendingAccounts.statusCode === 200,
+      pendingAccounts.body
+    );
+
+    const promoteMember = await request('PATCH', `/api/users/${member}/role`, moderator, {
+      role: 'moderator',
+    });
+    check(
+      'delegated managers still cannot promote users to moderator',
+      promoteMember.statusCode === 403,
+      promoteMember.body
+    );
+
+    const keepMember = await request('PATCH', `/api/users/${member}/role`, moderator, {
+      role: 'member',
+    });
     check('manage_users allows assigning the member role', keepMember.statusCode === 200, keepMember.body);
 
     const deleteUser = await request('DELETE', `/api/users/${disposable}`, moderator);
@@ -239,7 +326,14 @@ test('granular moderator permissions gate admin endpoints', async () => {
     );
 
     const grantManage = await request('PUT', `/api/users/${moderator}/permissions`, owner, {
-      permissions: ['create_rooms', 'edit_rooms', 'manage_users', 'delete_rooms', 'manage_permissions'],
+      permissions: [
+        'manage_invites',
+        'manage_server',
+        'manage_rooms',
+        'manage_verification',
+        'manage_users',
+        'manage_permissions',
+      ],
     });
     check('the owner can delegate manage_permissions', grantManage.statusCode === 200, grantManage.body);
 
@@ -255,7 +349,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
     );
 
     const selfEdit = await request('PUT', `/api/users/${moderator}/permissions`, moderator, {
-      permissions: ['create_rooms'],
+      permissions: ['manage_rooms'],
     });
     check('delegated managers cannot edit their own permissions', selfEdit.statusCode === 403, selfEdit.body);
 
@@ -263,7 +357,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
       'PUT',
       `/api/users/${secondModerator}/permissions`,
       moderator,
-      { permissions: ['create_rooms', 'manage_permissions'] }
+      { permissions: ['manage_rooms', 'manage_permissions'] }
     );
     check(
       'only the owner can hand out manage_permissions',
@@ -275,7 +369,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
       'PUT',
       `/api/users/${secondModerator}/permissions`,
       moderator,
-      { permissions: ['create_rooms'] }
+      { permissions: ['manage_rooms'] }
     );
     check(
       'delegated managers can grant ordinary permissions',
@@ -294,7 +388,7 @@ test('granular moderator permissions gate admin endpoints', async () => {
 
     const deleteRoom = await request('DELETE', `/api/rooms/${roomId}`, moderator);
     check(
-      'delete_rooms now allows deleting the room',
+      'manage_rooms allows deleting a room',
       deleteRoom.statusCode === 200,
       deleteRoom.body
     );

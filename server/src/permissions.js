@@ -3,18 +3,29 @@
 /**
  * Granular permissions for moderators.
  *
- * Owners always have every permission. Moderators start with none and are
- * granted individual permissions by the owner (or by a moderator who was
- * trusted with `manage_permissions`). Members never have admin permissions.
+ * Every permission maps to one section of the admin panel (except
+ * `manage_permissions`, which controls who may edit other moderators).
+ * Owners always have every permission. Moderators receive a sensible default
+ * set when promoted and can be tuned by the owner afterwards. Members never
+ * have admin permissions.
  */
 
 const PERMISSIONS = Object.freeze([
   'manage_invites',
-  'create_rooms',
-  'delete_rooms',
-  'edit_rooms',
+  'manage_server',
+  'manage_media',
+  'manage_rooms',
+  'manage_verification',
   'manage_users',
   'manage_permissions',
+]);
+
+// Moderators keep the basic capabilities they had before granular permissions:
+// working with invites, rooms and the verification queue.
+const DEFAULT_PERMISSIONS = Object.freeze([
+  'manage_invites',
+  'manage_rooms',
+  'manage_verification',
 ]);
 
 const PERMISSION_SET = new Set(PERMISSIONS);
@@ -81,20 +92,59 @@ function replaceUserPermissions(db, userId, permissions, grantedBy) {
     'INSERT INTO user_permissions (user_id, permission, granted_by) VALUES (?, ?, ?)'
   );
   const remove = db.prepare('DELETE FROM user_permissions WHERE user_id = ?');
+  const markInitialized = db.prepare(
+    'UPDATE users SET permissions_initialized = 1 WHERE id = ?'
+  );
   db.transaction(() => {
     remove.run(userId);
     for (const permission of permissions) {
       insert.run(userId, permission, grantedBy ?? null);
     }
+    markInitialized.run(userId);
   })();
 }
 
 function clearUserPermissions(db, userId) {
-  db.prepare('DELETE FROM user_permissions WHERE user_id = ?').run(userId);
+  const markUninitialized = db.prepare(
+    'UPDATE users SET permissions_initialized = 0 WHERE id = ?'
+  );
+  db.transaction(() => {
+    db.prepare('DELETE FROM user_permissions WHERE user_id = ?').run(userId);
+    markUninitialized.run(userId);
+  })();
+}
+
+/**
+ * Gives moderators that predate granular permissions their default set once.
+ * The `permissions_initialized` flag makes sure explicitly cleared grants are
+ * not re-added on every restart.
+ */
+function initializeDefaultPermissionsForModerators(db) {
+  const pending = db
+    .prepare("SELECT id FROM users WHERE role = 'moderator' AND permissions_initialized = 0")
+    .all();
+  if (pending.length === 0) return;
+
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO user_permissions (user_id, permission, granted_by) VALUES (?, ?, NULL)'
+  );
+  const markInitialized = db.prepare(
+    'UPDATE users SET permissions_initialized = 1 WHERE id = ?'
+  );
+
+  db.transaction(() => {
+    for (const user of pending) {
+      for (const permission of DEFAULT_PERMISSIONS) {
+        insert.run(user.id, permission);
+      }
+      markInitialized.run(user.id);
+    }
+  })();
 }
 
 module.exports = {
   PERMISSIONS,
+  DEFAULT_PERMISSIONS,
   isPermission,
   normalizePermissionList,
   getUserPermissions,
@@ -102,4 +152,5 @@ module.exports = {
   hasPermission,
   replaceUserPermissions,
   clearUserPermissions,
+  initializeDefaultPermissionsForModerators,
 };

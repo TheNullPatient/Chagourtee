@@ -19,7 +19,7 @@ Self-hosted messenger: the owner runs the server on their computer, creates invi
 - **User management**: Owner, moderator and member roles
 - **Security**: Authorization via sessions, password hashing
 - **Administration**: Control panel for creating rooms and invites
-- **Granular moderator permissions**: Owners can delegate invite, room and user management to individual moderators; a moderator without any permission does not see the admin panel
+- **Granular moderator permissions**: One permission per admin section (invites, server name, media storage, rooms, verification, users); new moderators get invites, rooms and verification by default, and a moderator without any permission does not see the admin panel
 - **Message editing**: Ability to edit and delete own messages
 - **Message replies**: Quotes, jump to the original message and a notification for the replied-to user
 - **Message reactions**: Quick emoji reactions with a per-room palette configured by the owner, grouped counters and a jump to unseen reactions
@@ -328,7 +328,7 @@ npm run lint
 - `POST /api/auth/logout` – logout
 - `GET /api/auth/me` – current user
 - `POST /api/auth/register` – registration (inviteId or bootstrap)
-- `GET/POST/PATCH/DELETE /api/rooms` – rooms (owner, or a moderator with `create_rooms` / `edit_rooms` / `delete_rooms`)
+- `GET/POST/PATCH/DELETE /api/rooms` – rooms (owner, or a moderator with `manage_rooms`)
 - `GET/PUT /api/rooms/:id/members` – access list for private and invite-only rooms
 - `POST /api/rooms/:id/unlock` – enter a password-protected room (`rememberMinutes`: 0 = ask on every visit, 1–10080 minutes, `null` = never)
 - `DELETE /api/rooms/:id/unlock` – forget the room password immediately
@@ -336,6 +336,9 @@ npm run lint
 - `GET /api/rooms/:id/messages`, `POST /api/rooms/:id/messages` – messages
 - `POST /api/rooms/:id/messages/:messageId/reactions` – toggle an emoji reaction from the room palette
 - `GET/POST/DELETE /api/invites` – invites (requires `manage_invites`)
+- `POST /api/server/settings` – server name (requires `manage_server`)
+- `GET/POST /api/media/storage-settings` – media limits and cleanup (requires `manage_media`)
+- `GET/POST /api/verification/{settings,pending,comments,codes}` – verification management (requires `manage_verification`)
 - `GET /api/verification/pending`, `POST /api/verification/approve`, `reject` – manual verification
 - `GET /api/verification/comments` – saved comments of approved members
 - `GET/PUT /api/users/:id/permissions` – granular permission grants for a moderator
@@ -391,7 +394,7 @@ Backend built on Fastify using SQLite for data storage:
 - Creating and renaming rooms
 - Configuring room access level, password and the invite list
 - Choosing the emoji palette available for reactions in each room
-- Assigning granular permissions to moderators (invites, rooms, users, permissions)
+- Assigning granular permissions to moderators (invites, server name, media storage, rooms, verification, users, permissions)
 - Managing all users (including assigning moderator roles)
 - Creating invites with restrictions
 - Verifying users manually or with one-time codes
