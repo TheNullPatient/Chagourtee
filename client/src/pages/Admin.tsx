@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '../AuthContext';
 import type { Room, Invite, User, MediaStorageSettings, RoomAccessLevel, RoomUpdateInput, Permission } from '../api';
 import { rooms as roomsApi, invites as invitesApi, verification as verificationApi, users as usersApi, serverSettings as serverSettingsApi, media, DEFAULT_REACTION_EMOJIS, ALL_PERMISSIONS, DEFAULT_PERMISSIONS, canAccessAdminPanel } from '../api';
@@ -111,6 +112,12 @@ export default function Admin() {
   const [deleteCommentOnApprove, setDeleteCommentOnApprove] = useState(false);
   const [codes, setCodes] = useState<{id: number, created_by_login: string, used: number, created_at: string, expires_at: string}[]>([]);
   const [customCode, setCustomCode] = useState<string>('');
+  const [createdCode, setCreatedCode] = useState<{
+    id: number;
+    code: string;
+    expires_at: string;
+  } | null>(null);
+  const [createdCodeCopied, setCreatedCodeCopied] = useState(false);
   const { rawName, displayName, setRawNameLocal } = useServerName();
   const [serverNameInput, setServerNameInput] = useState<string>(rawName ?? '');
   const [serverNameSaving, setServerNameSaving] = useState(false);
@@ -1178,17 +1185,58 @@ export default function Admin() {
         created_at: new Date().toISOString(),
         expires_at: newCode.expires_at
       };
-      setCodes([fullCode, ...codes]);
-
-      // Use the new copyToClipboard helper
-      await copyToClipboard(newCode.code);
+      setCodes((prev) => [fullCode, ...prev]);
 
       setCustomCode(''); // Очищаем поле ввода после успешного создания
-      showToast('Код верификации создан и скопирован в буфер', 'success');
+      setCreatedCodeCopied(false);
+      // The raw code is only available in this response. Show it once and
+      // never rely on the clipboard as the only way to deliver it.
+      setCreatedCode({
+        id: newCode.id,
+        code: newCode.code,
+        expires_at: newCode.expires_at,
+      });
     } catch (error) {
       DEBUG_MODE && console.error('Failed to create verification code:', error);
       showToast('Ошибка при создании кода: ' + (error as Error).message, 'error');
     }
+  };
+
+  const copyCreatedCode = async () => {
+    if (!createdCode) return;
+    try {
+      await copyToClipboard(createdCode.code);
+      setCreatedCodeCopied(true);
+    } catch {
+      showToast('Не удалось скопировать код', 'error');
+    }
+  };
+
+  const downloadCreatedCode = () => {
+    if (!createdCode) return;
+
+    const content = [
+      'Одноразовый код верификации Chagourtee',
+      '',
+      `Код: ${createdCode.code}`,
+      `Действует до: ${new Date(createdCode.expires_at).toLocaleString()}`,
+      '',
+      'Код одноразовый: после использования он станет недействительным.',
+      'Сервер хранит только хеш кода, поэтому восстановить его нельзя.',
+      'Если код потерян, удалите его и создайте новый.',
+      '',
+    ].join('\n');
+
+    const blob = new Blob([`\ufeff${content}`], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `verification-code-${createdCode.id}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('Файл с кодом скачан', 'success');
   };
 
 
@@ -1819,6 +1867,10 @@ export default function Admin() {
                 </span>
                 Одноразовые коды верификации
               </h3>
+              <p className="admin-field-hint">
+                Код показывается только при создании. Если он потерян, удалите
+                его и создайте новый.
+              </p>
               <div className="admin-code-create-block">
                 <input
                   type="text"
@@ -2355,6 +2407,66 @@ export default function Admin() {
                 Сохранить
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* One-time verification code modal. The code exists only in this
+          response, so the dialog cannot be dismissed by accident. */}
+      {createdCode && (
+        <div className="admin-modal-overlay">
+          <div
+            className="admin-modal-dialog admin-code-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="created-code-title"
+          >
+            <h3 className="admin-modal-title" id="created-code-title">
+              Код верификации создан
+            </h3>
+            <p className="admin-code-modal-warning">
+              Код показывается один раз. Сервер хранит только его хеш, поэтому
+              восстановить код нельзя. Если потеряете — удалите его и создайте новый.
+            </p>
+            <div className="admin-code-modal-code" aria-label="Одноразовый код верификации">
+              {createdCode.code}
+            </div>
+            <div className="admin-code-modal-actions">
+              <button
+                type="button"
+                onClick={() => void copyCreatedCode()}
+                className="admin-code-modal-button"
+              >
+                {createdCodeCopied ? 'Скопировано' : 'Копировать код'}
+              </button>
+              <button
+                type="button"
+                onClick={downloadCreatedCode}
+                className="secondary admin-code-modal-button"
+              >
+                Скачать .txt
+              </button>
+            </div>
+            <div className="admin-code-modal-qr">
+              <QRCodeSVG
+                value={createdCode.code}
+                size={200}
+                level="M"
+                bgColor="#ffffff"
+                fgColor="#111111"
+                marginSize={2}
+                title="QR-код для передачи кода верификации"
+              />
+            </div>
+            <p className="admin-code-modal-expiry">
+              Действует до: {new Date(createdCode.expires_at).toLocaleString()}
+            </p>
+            <button
+              type="button"
+              className="admin-code-modal-done"
+              onClick={() => setCreatedCode(null)}
+            >
+              Я сохранил код
+            </button>
           </div>
         </div>
       )}

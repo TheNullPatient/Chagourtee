@@ -14,7 +14,7 @@ Self-hosted messenger: the owner runs the server on their computer, creates invi
 ## Features
 
 - **Self-hosting**: Full control over your data, deployment on your own server
-- **User verification**: Owner approval or one-time codes, with an optional registration comment for context
+- **User verification**: Owner approval or one-time codes, with an optional registration comment for context; new codes are shown once with a QR and a downloadable text file
 - **Real-time chat**: Real-time communication with typing and presence indicators
 - **User management**: Owner, moderator and member roles
 - **Security**: Authorization via sessions, password hashing

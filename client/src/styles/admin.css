@@ -522,6 +522,70 @@
   cursor: pointer;
 }
 
+.admin-code-modal {
+  width: min(92vw, 460px);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.admin-code-modal-warning {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  border-left: 4px solid var(--warning);
+  background: var(--bg);
+  color: var(--text-muted);
+  border-radius: var(--radius-default);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.admin-code-modal-code {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: clamp(1.1rem, 5vw, 1.6rem);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.admin-code-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.admin-code-modal-button {
+  flex: 1 1 150px;
+}
+
+.admin-code-modal-qr {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-default);
+}
+
+.admin-code-modal-expiry {
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.admin-code-modal-done {
+  width: 100%;
+}
+
 .admin-user-card {
   padding: 1rem;
   background: var(--bg-elevated);
