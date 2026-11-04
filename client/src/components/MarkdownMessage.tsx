@@ -10,6 +10,7 @@ import AudioPlayer from './AudioPlayer';
 import VideoPlayer from './VideoPlayer';
 import MediaViewer from './MediaViewer';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { isInlineImageMime } from '../utils/media';
 import {
   addMessageHandler,
   removeMessageHandler,
@@ -169,7 +170,7 @@ const MarkdownMessage: React.FC<MarkdownMessageProps> = React.memo(
       media && media.length > 0 ? (
         <div className="media-container media-container-spaced">
           {mediaWithStatus.map(({ mediaFile, isMissing }) => {
-            const isImage = mediaFile.mime_type.startsWith('image/');
+            const isImage = isInlineImageMime(mediaFile.mime_type);
             const isVideo = mediaFile.mime_type.startsWith('video/');
             const isAudio = mediaFile.mime_type.startsWith('audio/');
 

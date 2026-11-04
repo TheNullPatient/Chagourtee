@@ -6,8 +6,48 @@ const {
   hasPermission,
 } = require('./permissions');
 
+const { createRateLimiter } = require('./rateLimit');
+
 const SALT_ROUNDS = 10;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const PASSWORD_MIN_LENGTH = 8;
+// bcrypt silently ignores everything after 72 bytes. Rejecting longer input
+// avoids the illusion that the extra characters add any strength.
+const PASSWORD_MAX_BYTES = 72;
+const LOGIN_MAX_LENGTH = 64;
+const LOGIN_PASSWORD_MAX_LENGTH = 1024;
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES_PER_LOGIN = 10;
+const LOGIN_MAX_FAILURES_PER_IP = 30;
+
+const loginFailureLimiter = createRateLimiter({
+  windowMs: LOGIN_WINDOW_MS,
+  max: LOGIN_MAX_FAILURES_PER_LOGIN,
+});
+const loginIpFailureLimiter = createRateLimiter({
+  windowMs: LOGIN_WINDOW_MS,
+  max: LOGIN_MAX_FAILURES_PER_IP,
+});
+
+function validatePassword(password) {
+  if (typeof password !== 'string') {
+    return { ok: false, error: 'Password must be a string' };
+  }
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return {
+      ok: false,
+      error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+    };
+  }
+  if (Buffer.byteLength(password, 'utf8') > PASSWORD_MAX_BYTES) {
+    return {
+      ok: false,
+      error: `Password must not exceed ${PASSWORD_MAX_BYTES} bytes`,
+    };
+  }
+  return { ok: true };
+}
 
 function hashPassword(password) {
   return bcrypt.hashSync(password, SALT_ROUNDS);
@@ -136,13 +176,50 @@ function authRoutes(fastify, _opts, done) {
 
   fastify.post('/api/auth/login', async (request, reply) => {
     const { login, password } = request.body || {};
-    if (!login || !password) {
+
+    const loginValue = typeof login === 'string' ? login.trim() : '';
+    const passwordValue = typeof password === 'string' ? password : '';
+
+    if (!loginValue || !passwordValue) {
       return reply.code(400).send({ error: 'Login and password required' });
     }
-    const user = db.prepare('SELECT id, login, password_hash, role, verified FROM users WHERE login = ?').get(login.trim());
-    if (!user || !verifyPassword(password, user.password_hash)) {
+    if (loginValue.length > LOGIN_MAX_LENGTH || passwordValue.length > LOGIN_PASSWORD_MAX_LENGTH) {
+      return reply.code(400).send({ error: 'Invalid login or password' });
+    }
+
+    // Throttle both the specific login and the source IP. The check happens
+    // before bcrypt so a brute-force loop cannot burn CPU for free.
+    const loginKey = `${request.ip}|${loginValue.toLowerCase()}`;
+    const loginLimit = loginFailureLimiter.check(loginKey);
+    const ipLimit = loginIpFailureLimiter.check(request.ip);
+    if (!loginLimit.allowed || !ipLimit.allowed) {
+      const retryAfterMs = Math.max(loginLimit.retryAfterMs, ipLimit.retryAfterMs);
+      const retryAfter = Math.max(1, Math.ceil(retryAfterMs / 1000));
+      return reply
+        .code(429)
+        .header('Retry-After', String(retryAfter))
+        .send({
+          error: 'Too many login attempts. Try again later.',
+          code: 'LOGIN_RATE_LIMITED',
+          retryAfter,
+        });
+    }
+
+    const user = db
+      .prepare('SELECT id, login, password_hash, role, verified FROM users WHERE login = ?')
+      .get(loginValue);
+
+    if (!user || !verifyPassword(passwordValue, user.password_hash)) {
+      loginFailureLimiter.hit(loginKey);
+      loginIpFailureLimiter.hit(request.ip);
       return reply.code(401).send({ error: 'Invalid login or password' });
     }
+
+    // A successful login clears the counter for that account. The IP counter is
+    // intentionally left alone: otherwise an attacker with one valid account
+    // could reset it between attempts and brute-force other accounts freely.
+    loginFailureLimiter.reset(loginKey);
+
     const sessionId = createSessionId();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
     
@@ -193,7 +270,10 @@ module.exports = {
   getSessionCookieOptions,
   hashPassword,
   verifyPassword,
+  validatePassword,
   createSessionId,
   isOwnerOrModerator,
-  SESSION_TTL_MS
+  SESSION_TTL_MS,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_MAX_BYTES,
 };

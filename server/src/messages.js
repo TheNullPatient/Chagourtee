@@ -16,6 +16,76 @@ const rateLimitStore = new Map(); // userId -> { count: number, timestamp: numbe
 const RATE_LIMIT_WINDOW = 10000; // 10 seconds window
 const MAX_MESSAGES_PER_WINDOW = 5; // Max 5 messages per window
 
+const MAX_MESSAGE_BODY_LENGTH = 10000;
+const MAX_MEDIA_ATTACHMENTS = 10;
+const MAX_BATCH_DELETE = 200;
+
+function normalizeMessageBody(value) {
+  if (value === undefined || value === null) {
+    return { ok: true, body: '' };
+  }
+  if (typeof value !== 'string') {
+    return { ok: false, error: 'Message body must be a string' };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > MAX_MESSAGE_BODY_LENGTH) {
+    return {
+      ok: false,
+      error: `Message body cannot exceed ${MAX_MESSAGE_BODY_LENGTH} characters`,
+    };
+  }
+  return { ok: true, body: trimmed };
+}
+
+function normalizeMediaIds(value) {
+  if (value === undefined || value === null) {
+    return { ok: true, ids: null };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, error: 'media_ids must be an array' };
+  }
+  if (value.length > MAX_MEDIA_ATTACHMENTS) {
+    return {
+      ok: false,
+      error: `media_ids cannot contain more than ${MAX_MEDIA_ATTACHMENTS} items`,
+    };
+  }
+
+  const ids = [];
+  for (const item of value) {
+    const id = Number(item);
+    if (!Number.isInteger(id) || id <= 0) {
+      return { ok: false, error: 'media_ids contains invalid ids' };
+    }
+    if (!ids.includes(id)) ids.push(id);
+  }
+
+  return { ok: true, ids };
+}
+
+/**
+ * Returns media IDs the user may not attach. New messages may only claim
+ * unattached files; editing may also keep files already on that message.
+ */
+function findUnavailableMedia(db, ids, userId, messageId = null) {
+  if (ids.length === 0) return [];
+
+  const placeholders = ids.map(() => '?').join(',');
+  const params = [...ids, userId];
+  let sql = `SELECT id FROM media_files WHERE id IN (${placeholders}) AND uploaded_by = ?`;
+  if (messageId == null) {
+    sql += ' AND message_id IS NULL';
+  } else {
+    sql += ' AND (message_id IS NULL OR message_id = ?)';
+    params.push(messageId);
+  }
+
+  const rows = db.prepare(sql).all(...params);
+  const found = new Set(rows.map((row) => Number(row.id)));
+  return ids.filter((id) => !found.has(id));
+}
+
+
 // Cleanup old rate limit entries periodically
 const rateLimitCleanup = setInterval(() => {
   const now = Date.now();
@@ -196,8 +266,22 @@ module.exports = function (fastify) {
     preHandler: [fastify.requireAuth],
   }, async (request, reply) => {
     const roomId = Number(request.params.roomId);
-    const limit = Math.min(Number(request.query.limit) || 50, 100);
-    const before = request.query.before;
+    const rawLimit = Number(request.query.limit);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(Math.max(Math.floor(rawLimit), 1), 100)
+      : 50;
+
+    let before = null;
+    if (
+      request.query.before !== undefined &&
+      request.query.before !== null &&
+      request.query.before !== ''
+    ) {
+      before = Number(request.query.before);
+      if (!Number.isInteger(before) || before <= 0) {
+        return reply.code(400).send({ error: 'Invalid before cursor' });
+      }
+    }
 
     const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
@@ -300,9 +384,23 @@ module.exports = function (fastify) {
   }, async (request, reply) => {
     const roomId = Number(request.params.roomId);
     const { body, media_ids, mediaPosition, replyToMessageId } = request.body || {};
-    
+
+    const bodyResult = normalizeMessageBody(body);
+    if (!bodyResult.ok) {
+      return reply.code(400).send({ error: bodyResult.error });
+    }
+
+    const mediaResult = normalizeMediaIds(media_ids);
+    if (!mediaResult.ok) {
+      return reply.code(400).send({ error: mediaResult.error });
+    }
+
+    const normalizedBody = bodyResult.body;
+    const normalizedMediaIds = mediaResult.ids || [];
+    const hasMedia = normalizedMediaIds.length > 0;
+
     // Either body or media_ids must be present
-    if ((!body || !String(body).trim()) && (!media_ids || !Array.isArray(media_ids) || media_ids.length === 0)) {
+    if (!normalizedBody && !hasMedia) {
       return reply.code(400).send({ error: 'Message body or media files required' });
     }
 
@@ -327,6 +425,16 @@ module.exports = function (fastify) {
     
     // Update rate limit store
     rateLimitStore.set(userId, userRateLimit);
+
+    if (hasMedia) {
+      const unavailable = findUnavailableMedia(db, normalizedMediaIds, userId);
+      if (unavailable.length > 0) {
+        return reply.code(400).send({
+          error: 'Some media files are not available for this user',
+          mediaIds: unavailable,
+        });
+      }
+    }
 
     const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
@@ -360,7 +468,7 @@ module.exports = function (fastify) {
     ).run(
       roomId,
       request.session.userId,
-      String(body || '').trim(),
+      normalizedBody,
       mediaPosition === 'above' || mediaPosition === 'below' ? mediaPosition : null,
       replyTarget ? replyTarget.id : null,
       replyTarget ? replyTarget.user_id : null,
@@ -371,13 +479,13 @@ module.exports = function (fastify) {
     const messageId = result.lastInsertRowid;
     
     // If media IDs were provided, link them to the message
-    if (media_ids && Array.isArray(media_ids) && media_ids.length > 0) {
-      const placeholders = media_ids.map(() => '?').join(',');
+    if (normalizedMediaIds.length > 0) {
+      const placeholders = normalizedMediaIds.map(() => '?').join(',');
       db.prepare(`
         UPDATE media_files 
         SET message_id = ? 
         WHERE id IN (${placeholders}) AND uploaded_by = ?
-      `).run(messageId, ...media_ids, request.session.userId);
+      `).run(messageId, ...normalizedMediaIds, request.session.userId);
     }
     
     // Get the created message with media
@@ -470,7 +578,8 @@ module.exports = function (fastify) {
     const roomId = Number(request.params.roomId);
     const { lastReadMessageId } = request.body || {};
 
-    if (!lastReadMessageId || Number.isNaN(Number(lastReadMessageId))) {
+    const lastReadId = Number(lastReadMessageId);
+    if (!Number.isInteger(lastReadId) || lastReadId <= 0) {
       return reply.code(400).send({ error: 'lastReadMessageId is required' });
     }
 
@@ -484,7 +593,7 @@ module.exports = function (fastify) {
       .prepare(
         'SELECT MAX(id) as max_id FROM messages WHERE room_id = ? AND id <= ?'
       )
-      .get(roomId, Number(lastReadMessageId));
+      .get(roomId, lastReadId);
 
     if (!maxIdRow || !maxIdRow.max_id) {
       return { ok: true, marked: 0 };
@@ -519,7 +628,21 @@ module.exports = function (fastify) {
     const messageId = Number(request.params.messageId);
     const { body, media_ids, mediaPosition } = request.body || {};
 
-    if ((!body || !String(body).trim()) && (!media_ids || !Array.isArray(media_ids))) {
+    const bodyResult = normalizeMessageBody(body);
+    if (!bodyResult.ok) {
+      return reply.code(400).send({ error: bodyResult.error });
+    }
+    const mediaResult = normalizeMediaIds(media_ids);
+    if (!mediaResult.ok) {
+      return reply.code(400).send({ error: mediaResult.error });
+    }
+
+    const normalizedBody = body === undefined ? null : bodyResult.body;
+    const normalizedMediaIds = mediaResult.ids;
+    const hasBody = normalizedBody !== null && normalizedBody.length > 0;
+    const hasMedia = normalizedMediaIds !== null && normalizedMediaIds.length > 0;
+
+    if (!hasBody && !hasMedia) {
       return reply.code(400).send({ error: 'Message body or media files required' });
     }
 
@@ -552,13 +675,28 @@ module.exports = function (fastify) {
       return reply.code(403).send({ error: 'Cannot edit another user\'s message' });
     }
 
+    if (normalizedMediaIds && normalizedMediaIds.length > 0) {
+      const unavailable = findUnavailableMedia(
+        db,
+        normalizedMediaIds,
+        request.session.userId,
+        messageId
+      );
+      if (unavailable.length > 0) {
+        return reply.code(400).send({
+          error: 'Some media files are not available for this user',
+          mediaIds: unavailable,
+        });
+      }
+    }
+
     // Update the message
     const updateFields = [];
     const updateParams = [];
     
-    if (body !== undefined) {
+    if (normalizedBody !== null) {
       updateFields.push('body = ?');
-      updateParams.push(String(body).trim());
+      updateParams.push(normalizedBody);
     }
     
     if (mediaPosition !== undefined && (mediaPosition === 'above' || mediaPosition === 'below')) {
@@ -573,28 +711,23 @@ module.exports = function (fastify) {
     const result = db.prepare(updateQuery).run(...updateParams);
 
     // If media_ids were provided, update media associations
-    if (media_ids && Array.isArray(media_ids) && media_ids.length > 0) {
+    if (normalizedMediaIds !== null) {
       // First unlink all existing media from this message
       db.prepare(`
         UPDATE media_files 
         SET message_id = NULL 
         WHERE message_id = ?
       `).run(messageId);
-      
-      // Then link the specified media files to this message
-      const placeholders = media_ids.map(() => '?').join(',');
-      db.prepare(`
-        UPDATE media_files 
-        SET message_id = ? 
-        WHERE id IN (${placeholders}) AND uploaded_by = ?
-      `).run(messageId, ...media_ids, request.session.userId);
-    } else if (media_ids && Array.isArray(media_ids)) {
-      // If empty array was provided, unlink all media from this message
-      db.prepare(`
-        UPDATE media_files 
-        SET message_id = NULL 
-        WHERE message_id = ?
-      `).run(messageId);
+
+      if (normalizedMediaIds.length > 0) {
+        // Then link the specified media files to this message
+        const placeholders = normalizedMediaIds.map(() => '?').join(',');
+        db.prepare(`
+          UPDATE media_files
+          SET message_id = ?
+          WHERE id IN (${placeholders}) AND uploaded_by = ?
+        `).run(messageId, ...normalizedMediaIds, request.session.userId);
+      }
     }
 
     // Get updated message with media
@@ -833,17 +966,29 @@ module.exports = function (fastify) {
     if (!Array.isArray(messageIds) || messageIds.length === 0) {
       return reply.code(400).send({ error: 'Array of message IDs required' });
     }
+    if (messageIds.length > MAX_BATCH_DELETE) {
+      return reply.code(400).send({
+        error: `Cannot delete more than ${MAX_BATCH_DELETE} messages at once`,
+      });
+    }
+
+    const uniqueMessageIds = [];
+    for (const item of messageIds) {
+      const id = Number(item);
+      if (!Number.isInteger(id) || id <= 0) {
+        return reply.code(400).send({ error: 'Array of valid message IDs required' });
+      }
+      if (!uniqueMessageIds.includes(id)) uniqueMessageIds.push(id);
+    }
+    if (uniqueMessageIds.length === 0) {
+      return reply.code(400).send({ error: 'Array of valid message IDs required' });
+    }
 
     // Check if room exists
     const room = getRoom(db, roomId);
     if (!room) return reply.code(404).send({ error: 'Room not found' });
     const accessDenied = denyRoomAccess(fastify, db, request, reply, room);
     if (accessDenied) return accessDenied;
-
-    const uniqueMessageIds = [...new Set(messageIds.map(Number).filter(Number.isInteger))];
-    if (uniqueMessageIds.length === 0) {
-      return reply.code(400).send({ error: 'Array of valid message IDs required' });
-    }
 
     // Fetch messages to check permissions
     const placeholders = uniqueMessageIds.map(() => '?').join(',');

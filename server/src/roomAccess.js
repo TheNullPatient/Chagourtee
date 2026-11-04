@@ -19,6 +19,7 @@ const ACCESS_LEVELS = Object.freeze(['public', 'closed', 'private', 'restricted'
 const DEFAULT_ACCESS_LEVEL = 'public';
 const ROOM_PASSWORD_MIN_LENGTH = 4;
 const ROOM_PASSWORD_MAX_LENGTH = 128;
+const MAX_ROOM_MEMBERS = 1000;
 // How long a user may postpone re-entering a room password (0 = ask on every visit).
 // `null` is a separate "never" value; the numeric limit only bounds timers.
 const ROOM_UNLOCK_MAX_MINUTES = 7 * 24 * 60;
@@ -165,10 +166,20 @@ function normalizeMemberIds(db, memberIds) {
   if (!Array.isArray(memberIds)) {
     return { ok: false, error: 'memberIds must be an array' };
   }
+  if (memberIds.length > MAX_ROOM_MEMBERS) {
+    return {
+      ok: false,
+      error: `memberIds cannot contain more than ${MAX_ROOM_MEMBERS} users`,
+    };
+  }
 
-  const ids = [...new Set(memberIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
-  if (ids.length !== new Set(memberIds.map(Number)).size) {
-    return { ok: false, error: 'memberIds contains invalid user ids' };
+  const ids = [];
+  for (const value of memberIds) {
+    const id = Number(value);
+    if (!Number.isInteger(id) || id <= 0) {
+      return { ok: false, error: 'memberIds contains invalid user ids' };
+    }
+    if (!ids.includes(id)) ids.push(id);
   }
   if (ids.length === 0) return { ok: true, ids: [] };
 
@@ -301,6 +312,7 @@ module.exports = {
   ROOM_PASSWORD_MIN_LENGTH,
   ROOM_PASSWORD_MAX_LENGTH,
   ROOM_UNLOCK_MAX_MINUTES,
+  MAX_ROOM_MEMBERS,
   isValidAccessLevel,
   normalizeAccessLevel,
   isPrivileged,

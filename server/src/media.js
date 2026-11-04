@@ -7,6 +7,7 @@ const { pipeline } = require('stream/promises');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
 const ffmpeg = require('fluent-ffmpeg');
+const { getRoom, canAccessRoom } = require('./roomAccess');
 
 // Directory for storing encrypted media files.
 // CHAGOURTEE_MEDIA_DIR exists so tests can use an isolated directory.
@@ -216,6 +217,71 @@ function createDecryptedRangeStream(filePath, header, key, start, end) {
 function isFileTypeAllowed(mimeType, originalName) {
     // Allow all file types - no restriction
     return true;
+}
+
+const MAX_ORIGINAL_FILENAME_LENGTH = 255;
+
+// Types that browsers render as passive content. Everything else is served as
+// application/octet-stream with Content-Disposition: attachment, so an
+// uploaded HTML/SVG/XML file can never execute script on this origin.
+const INLINE_IMAGE_TYPES = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'image/avif',
+    'image/apng',
+    'image/bmp',
+    'image/x-icon',
+    'image/vnd.microsoft.icon',
+]);
+
+function normalizeMimeType(value) {
+    if (typeof value !== 'string') return 'application/octet-stream';
+    const mime = value.split(';')[0].trim().toLowerCase();
+    if (
+        !mime ||
+        mime.length > 255 ||
+        !/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(mime)
+    ) {
+        return 'application/octet-stream';
+    }
+    return mime;
+}
+
+function isInlineSafeMimeType(mimeType) {
+    const mime = normalizeMimeType(mimeType);
+    return (
+        INLINE_IMAGE_TYPES.has(mime) ||
+        mime.startsWith('audio/') ||
+        mime.startsWith('video/')
+    );
+}
+
+/** RFC 5987-aware Content-Disposition without header injection. */
+function buildContentDisposition(filename, disposition) {
+    const safeName =
+        path
+            .basename(String(filename || 'file').replace(/\\/g, '/'))
+            .replace(/[\r\n"\\]/g, '_')
+            .slice(0, MAX_ORIGINAL_FILENAME_LENGTH) || 'file';
+    const fallback = safeName.replace(/[^\x20-\x7E]/g, '_');
+    const encoded = encodeURIComponent(safeName).replace(
+        /['()*]/g,
+        (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+    );
+    return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
+function getMediaResponseHeaders(mimeType, originalName) {
+    const inlineSafe = isInlineSafeMimeType(mimeType);
+    return {
+        contentType: inlineSafe ? normalizeMimeType(mimeType) : 'application/octet-stream',
+        contentDisposition: buildContentDisposition(
+            originalName,
+            inlineSafe ? 'inline' : 'attachment'
+        ),
+    };
 }
 
 /**
@@ -816,27 +882,41 @@ async function mediaPlugin(fastify, options) {
                     ? null
                     : Number(body.maxStorageSize);
             const orphanCleanupEnabled = body.orphanCleanupEnabled === false ? 0 : 1;
-            const orphanCleanupIntervalMinutes = Math.max(
-                1,
-                Number(body.orphanCleanupIntervalMinutes || 60)
+            const orphanCleanupIntervalMinutes = Number(
+                body.orphanCleanupIntervalMinutes ?? 60
             );
-            const orphanCleanupGraceMinutes = Math.max(
-                1,
-                Number(body.orphanCleanupGraceMinutes || 10)
+            const orphanCleanupGraceMinutes = Number(
+                body.orphanCleanupGraceMinutes ?? 10
             );
 
             if (
                 requestedMaxFileSize !== null &&
-                (!Number.isFinite(requestedMaxFileSize) || requestedMaxFileSize < -1)
+                (!Number.isInteger(requestedMaxFileSize) || requestedMaxFileSize < -1)
             ) {
                 return reply.code(400).send({ error: 'Invalid maxFileSize' });
             }
 
             if (
                 requestedMaxStorageSize !== null &&
-                (!Number.isFinite(requestedMaxStorageSize) || requestedMaxStorageSize < 0)
+                (!Number.isInteger(requestedMaxStorageSize) || requestedMaxStorageSize < 0)
             ) {
                 return reply.code(400).send({ error: 'Invalid maxStorageSize' });
+            }
+
+            if (
+                !Number.isInteger(orphanCleanupIntervalMinutes) ||
+                orphanCleanupIntervalMinutes < 1 ||
+                orphanCleanupIntervalMinutes > 7 * 24 * 60
+            ) {
+                return reply.code(400).send({ error: 'Invalid orphanCleanupIntervalMinutes' });
+            }
+
+            if (
+                !Number.isInteger(orphanCleanupGraceMinutes) ||
+                orphanCleanupGraceMinutes < 1 ||
+                orphanCleanupGraceMinutes > 7 * 24 * 60
+            ) {
+                return reply.code(400).send({ error: 'Invalid orphanCleanupGraceMinutes' });
             }
 
             const now = new Date().toISOString();
@@ -946,15 +1026,28 @@ async function mediaPlugin(fastify, options) {
                 return reply.code(400).send({ error: 'No file uploaded' });
             }
 
+            // Normalize the display name. It is only used for metadata and the
+            // Content-Disposition header, but a bounded value keeps headers and
+            // database rows predictable.
+            const rawFilename =
+                typeof data.filename === 'string' && data.filename.length > 0
+                    ? data.filename
+                    : 'file';
+            const originalName =
+                path
+                    .basename(rawFilename.replace(/\\/g, '/'))
+                    .replace(/[\r\n"\\]/g, '_')
+                    .slice(0, MAX_ORIGINAL_FILENAME_LENGTH) || 'file';
+
             // Override MIME type for .aif/.aiff to treat as documents
-            let mimeTypeToUse = data.mimetype;
-            const lowerName = data.filename.toLowerCase();
+            let mimeTypeToUse = normalizeMimeType(data.mimetype);
+            const lowerName = originalName.toLowerCase();
             if (lowerName.endsWith('.aif') || lowerName.endsWith('.aiff')) {
                 mimeTypeToUse = 'application/octet-stream';
             }
 
             // Check file type with potentially overridden MIME type
-            if (!isFileTypeAllowed(mimeTypeToUse, data.filename)) {
+            if (!isFileTypeAllowed(mimeTypeToUse, originalName)) {
                 return reply.code(400).send({ error: 'File type not allowed' });
             }
 
@@ -963,10 +1056,10 @@ async function mediaPlugin(fastify, options) {
                 keyBuffer = getMediaEncryptionKey();
             } catch (error) {
                 console.error('Media encryption is not configured correctly:', error.message);
-                return reply.code(500).send({ error: error.message });
+                return reply.code(500).send({ error: 'Media encryption is not configured' });
             }
 
-            const encryptedFilename = generateEncryptedFilename(data.filename);
+            const encryptedFilename = generateEncryptedFilename(originalName);
             finalPath = path.join(MEDIA_DIR, encryptedFilename);
             tempPath = `${finalPath}.part`;
 
@@ -1037,7 +1130,7 @@ async function mediaPlugin(fastify, options) {
             `);
 
             const result = stmt.run(
-                data.filename,
+                originalName,
                 encryptedFilename,
                 mimeTypeToUse,
                 uploadedBytes,
@@ -1049,7 +1142,7 @@ async function mediaPlugin(fastify, options) {
             // Return file info
             reply.send({
                 id: result.lastInsertRowid,
-                original_name: data.filename,
+                original_name: originalName,
                 encrypted_filename: encryptedFilename,
                 mime_type: mimeTypeToUse,
                 file_size: uploadedBytes
@@ -1073,7 +1166,7 @@ async function mediaPlugin(fastify, options) {
                 });
             }
             console.error('Upload error:', error);
-            reply.code(500).send({ error: 'Upload failed', details: error.message });
+            reply.code(500).send({ error: 'Upload failed' });
         }
     });
     
@@ -1122,10 +1215,23 @@ async function mediaPlugin(fastify, options) {
                     return reply.code(404).send({ error: 'File not found' });
                 }
 
-                // In Chagourtee, all authenticated users have access to all rooms,
-                // so we only need to check if the media file is associated with a message
-                // that belongs to a room (which is already checked by the query above)
-                // and if the requesting user is authenticated (which is handled by preHandler)
+                // Media attached to a message inherits that room's access rules.
+                // Files that are not attached yet (a fresh upload) are private
+                // to the user who uploaded them. Answering 404 avoids leaking
+                // whether a file exists in a room the caller cannot enter.
+                const requestingUser = req.user || fastify.getUser(req.session.userId);
+                if (!requestingUser) {
+                    return reply.code(401).send({ error: 'Unauthorized' });
+                }
+
+                if (mediaFile.message_id) {
+                    const room = getRoom(db, mediaFile.room_id);
+                    if (!room || !canAccessRoom(db, room, requestingUser)) {
+                        return reply.code(404).send({ error: 'File not found' });
+                    }
+                } else if (Number(mediaFile.uploaded_by) !== Number(requestingUser.id)) {
+                    return reply.code(404).send({ error: 'File not found' });
+                }
 
                 const isAudio =
                     typeof mediaFile.mime_type === 'string' &&
@@ -1147,6 +1253,11 @@ async function mediaPlugin(fastify, options) {
                     }
                 }
 
+                const responseHeaders = getMediaResponseHeaders(
+                    mimeTypeToServe,
+                    mediaFile.original_name
+                );
+
                 const filePath = path.resolve(MEDIA_DIR, encryptedFilenameToServe);
                 if (!filePath.startsWith(MEDIA_DIR + path.sep)) {
                     return reply.code(400).send({ error: 'Invalid filename' });
@@ -1161,7 +1272,7 @@ async function mediaPlugin(fastify, options) {
                     keyBuffer = getMediaEncryptionKey();
                 } catch (error) {
                     console.error('Media encryption is not configured correctly:', error.message);
-                    return reply.code(500).send({ error: error.message });
+                    return reply.code(500).send({ error: 'Media encryption is not configured' });
                 }
 
                 let header;
@@ -1176,12 +1287,16 @@ async function mediaPlugin(fastify, options) {
                 const range = req.headers.range;
 
                 reply.header('Accept-Ranges', 'bytes');
+                reply.header('X-Content-Type-Options', 'nosniff');
+                reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
+                reply.header('Content-Disposition', responseHeaders.contentDisposition);
+                reply.header('Cache-Control', 'private, no-store');
 
                 if (!range) {
                     reply
                         .code(200)
                         .header('Content-Length', String(total))
-                        .type(mimeTypeToServe);
+                        .type(responseHeaders.contentType);
 
                     if (total === 0) {
                         return reply.send(Buffer.alloc(0));
@@ -1244,16 +1359,13 @@ async function mediaPlugin(fastify, options) {
                     .code(206)
                     .header('Content-Range', `bytes ${start}-${end}/${total}`)
                     .header('Content-Length', String(contentLength))
-                    .type(mimeTypeToServe)
+                    .type(responseHeaders.contentType)
                     .send(
                         createDecryptedRangeStream(filePath, header, keyBuffer, start, end)
                     );
             } catch (error) {
                 console.error('Serve media error:', error);
-                reply.code(500).send({
-                    error: 'Failed to serve media',
-                    details: error.message,
-                });
+                reply.code(500).send({ error: 'Failed to serve media' });
             }
         }
     );

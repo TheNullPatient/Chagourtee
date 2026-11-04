@@ -165,7 +165,8 @@ Recommended environment variables (or `.env` file in `server/`):
 - `PORT` – port (default 3000)
 - `HOST` – host (0.0.0.0 for access from other machines)
 - `CHAGOURTEE_DB_PATH` – SQLite file path (default `./data/chagourtee.db`)
-- `CHAGOURTEE_SESSION_SECRET` – secret for cookies (must be changed)
+- `CHAGOURTEE_SESSION_SECRET` – secret used to sign cookies and hash verification codes. If unset, the server generates a random secret and stores it in the database (`server_secrets` table); setting it explicitly is recommended for production and required when running several instances against the same data
+- `CHAGOURTEE_TRUST_PROXY` – set to `true` only behind a trusted reverse proxy so `X-Forwarded-For` is used for rate limiting (default `false`)
 - `CHAGOURTEE_COOKIE_SECURE` – `Secure` flag for the session cookie: `auto` (default, enabled only over HTTPS), `true` or `false`. For plain HTTP deployments (e.g. `http://192.168.0.13:4173`) keep `auto` or set `false`
 - `CHAGOURTEE_BOOTSTRAP_SECRET` – secret for creating the first owner (see above)
 - `CHAGOURTEE_MAX_FILE_SIZE` – maximum file size for upload in bytes (default 52428800 = 50MB)
@@ -370,11 +371,16 @@ Backend built on Fastify using SQLite for data storage:
 ### Security
 
 - Password hashing with bcrypt
-- Session protection via cookies with httpOnly and secure settings
+- Password policy: minimum 8 characters and at most 72 bytes (bcrypt limit)
+- Login and registration rate limiting (per account and per IP)
+- Session protection via cookies with httpOnly and secure settings; password changes revoke other sessions
 - Permission checks for access to protected routes
 - User verification checks for specific actions
 - Unverified accounts are blocked from the REST API and WebSocket until approval
-- Protection against unauthorized room access
+- Protection against unauthorized room access, including media files attached to messages
+- Unsafe uploaded types (HTML, SVG, XML, …) are served as downloads with `nosniff` and a sandbox CSP
+- Media is encrypted at rest with AES-256-GCM
+- Session and verification-code secrets default to a generated per-installation value stored in the database
 
 ## Functional capabilities
 

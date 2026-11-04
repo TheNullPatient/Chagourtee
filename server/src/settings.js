@@ -16,6 +16,9 @@ module.exports = function (fastify) {
     const { server_name } = request.body || {};
     
     // Validate and sanitize inputs
+    if (server_name !== undefined && server_name !== null && typeof server_name !== 'string') {
+      return reply.code(400).send({ error: 'Server name must be a string' });
+    }
     const rawName = typeof server_name === 'string' ? server_name : '';
     const trimmedName = rawName.trim();
 

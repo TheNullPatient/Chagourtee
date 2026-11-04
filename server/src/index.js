@@ -5,9 +5,11 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const fastify = require('fastify');
 const cookie = require('@fastify/cookie');
 const { getDb } = require('./db');
-const { hashPassword, verifyPassword, SESSION_TTL_MS, createSessionId } = require('./auth');
+const { hashPassword, verifyPassword, validatePassword, SESSION_TTL_MS, createSessionId } = require('./auth');
 const authPlugin = require('./auth').plugin;
 const { authRoutes, addAuthUtils, getSessionCookieOptions } = require('./auth');
+const { createRateLimiter } = require('./rateLimit');
+const { getSessionSecret } = require('./secrets');
 const { logger } = require('../logger');
 const {
   createHttpRedirectServer,
@@ -15,6 +17,13 @@ const {
 } = require('./secureConnection');
 
 const SESSION_COOKIE = 'chagourtee_sid';
+
+// Registration touches the database and bcrypt, so throttle it per source IP.
+// Invites already gate who can register; this only limits scripted abuse.
+const registerLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 60,
+});
 
 // Import version information from the dedicated version module
 const { getVersionInfo } = require('./version');
@@ -42,6 +51,10 @@ if (
 // Initialize Fastify server with request logging via custom hook
 const server = fastify({
   logger: false,
+  // Rate limiting keys off request.ip. Behind a reverse proxy every request
+  // would otherwise look like it came from the proxy; enable this only when
+  // the proxy is trusted and sets X-Forwarded-For.
+  trustProxy: process.env.CHAGOURTEE_TRUST_PROXY === 'true',
   ...(secureConnection.enabled ? { https: secureConnection.tls } : {}),
 });
 
@@ -58,6 +71,22 @@ server.addHook('onResponse', async (request, reply) => {
   const status = reply.statusCode;
   const logLevel = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'debug';
   logger[logLevel](`${method} ${url} — ${status} (${duration}ms)`);
+});
+
+// Baseline security headers. Media responses add their own restrictive
+// Content-Security-Policy and Content-Disposition next to these.
+server.addHook('onSend', async (request, reply, payload) => {
+  reply.header('X-Content-Type-Options', 'nosniff');
+  reply.header('X-Frame-Options', 'DENY');
+  reply.header('Referrer-Policy', 'no-referrer');
+  reply.header('X-XSS-Protection', '0');
+  reply.header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+  if (secureConnection.enabled || request.protocol === 'https') {
+    reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
+  return payload;
 });
 
 async function run() {
@@ -86,8 +115,20 @@ async function run() {
     return row ? { ...row, verified: Boolean(row.verified) } : null;
   });
 
+  const sessionSecret = getSessionSecret(db);
+  if (!String(process.env.CHAGOURTEE_SESSION_SECRET || '').trim()) {
+    logger.warn(
+      'CHAGOURTEE_SESSION_SECRET is not set: using a generated per-installation secret stored in the database. Set it explicitly to keep sessions and verification codes valid when migrating the database.'
+    );
+  }
+  if (!String(process.env.CHAGOURTEE_MEDIA_ENCRYPTION_KEY || '').trim()) {
+    logger.warn(
+      'CHAGOURTEE_MEDIA_ENCRYPTION_KEY is not set: media upload and download will fail until it is configured. Run "npm run generate-encryption-key".'
+    );
+  }
+
   await server.register(cookie, {
-    secret: process.env.CHAGOURTEE_SESSION_SECRET || 'change-me-in-production',
+    secret: sessionSecret,
   });
   await server.register(authPlugin);
   await server.register(addAuthUtils); // Register the auth utility functions
@@ -186,13 +227,41 @@ async function run() {
 
   server.post('/api/auth/register', async (request, reply) => {
     const { inviteId, login, password, comment, bootstrap } = request.body || {};
+
+    if (typeof login !== 'string' || typeof password !== 'string') {
+      return reply.code(400).send({ error: 'Login and password required' });
+    }
+    if (inviteId !== undefined && inviteId !== null && typeof inviteId !== 'string') {
+      return reply.code(400).send({ error: 'Invalid invite' });
+    }
+    if (typeof bootstrap !== 'undefined' && typeof bootstrap !== 'string') {
+      return reply.code(400).send({ error: 'Invalid bootstrap secret' });
+    }
+
+    const registerLimit = registerLimiter.check(request.ip);
+    if (!registerLimit.allowed) {
+      const retryAfter = Math.max(1, Math.ceil(registerLimit.retryAfterMs / 1000));
+      return reply
+        .code(429)
+        .header('Retry-After', String(retryAfter))
+        .send({
+          error: 'Too many registration attempts. Try again later.',
+          code: 'REGISTER_RATE_LIMITED',
+          retryAfter,
+        });
+    }
+    registerLimiter.hit(request.ip);
+
     if (!login || !password) {
       return reply.code(400).send({ error: 'Login and password required' });
     }
     
-    // Additional validation for password_hash integrity
-    if (typeof password !== 'string' || password.trim().length === 0) {
-      return reply.code(400).send({ error: 'Password must be a non-empty string' });
+    // One password policy for registration and password changes. bcrypt only
+    // uses the first 72 bytes, so longer input is rejected instead of silently
+    // truncated.
+    const passwordCheck = validatePassword(password);
+    if (!passwordCheck.ok) {
+      return reply.code(400).send({ error: passwordCheck.error });
     }
     
     const loginTrim = login.trim();
@@ -215,6 +284,9 @@ async function run() {
       ).run(loginTrim, hashPassword(password), 'owner');
     } else {
       if (!inviteId) return reply.code(400).send({ error: 'Invite required' });
+      if (inviteId.length === 0 || inviteId.length > 128) {
+        return reply.code(400).send({ error: 'Invalid invite' });
+      }
       const invite = server.db.prepare(
         'SELECT id, created_by, max_uses, uses_count, expires_at FROM invites WHERE id = ?'
       ).get(inviteId);

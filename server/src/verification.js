@@ -1,4 +1,5 @@
 const { deleteUserData } = require('./dataCleanup');
+const { getVerificationCodeSecret } = require('./secrets');
 const crypto = require('crypto');
 
 const CODE_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
@@ -6,14 +7,14 @@ const MAX_CODE_ATTEMPTS = 5;
 const CODE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const codeAttempts = new Map();
 
-function getCodeSecret() {
-  return process.env.CHAGOURTEE_SESSION_SECRET || 'chagourtee-verification-code-secret';
-}
-
 // A deterministic lookup hash keeps code use O(1). Storing bcrypt hashes forced
-// a full scan with one synchronous bcrypt comparison per stored code.
-function hashCode(code) {
-  return crypto.createHmac('sha256', getCodeSecret()).update(code).digest('hex');
+// a full scan with one synchronous bcrypt comparison per stored code. The
+// secret is stable across restarts and never falls back to a public constant.
+function hashCode(db, code) {
+  return crypto
+    .createHmac('sha256', getVerificationCodeSecret(db))
+    .update(code)
+    .digest('hex');
 }
 
 let lastCodeCleanupAt = 0;
@@ -232,26 +233,29 @@ module.exports = function (fastify) {
       .get();
     
     const { userId } = request.body || {};
-    if (!userId) return reply.code(400).send({ error: 'userId required' });
+    const targetUserId = Number(userId);
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+      return reply.code(400).send({ error: 'userId required' });
+    }
 
     const r = setting && setting.delete_comment_on_approve
       ? db
           .prepare(
             'UPDATE users SET verified = 1, registration_comment = NULL WHERE id = ? AND verified = 0'
           )
-          .run(Number(userId))
-      : db.prepare('UPDATE users SET verified = 1 WHERE id = ? AND verified = 0').run(Number(userId));
+          .run(targetUserId)
+      : db.prepare('UPDATE users SET verified = 1 WHERE id = ? AND verified = 0').run(targetUserId);
     if (r.changes === 0) return reply.code(404).send({ error: 'User not found or already verified' });
     
     // Broadcast user verification to the user
-    fastify.broadcastToUser(Number(userId), {
+    fastify.broadcastToUser(targetUserId, {
       type: 'user_verified',
-      userId: Number(userId)
+      userId: targetUserId
     });
 
     // Реалтайм: обновляем списки пользователей/ожидающих
     if (fastify.broadcastAll) {
-      const updatedUser = db.prepare('SELECT id, login, role, verified, created_at FROM users WHERE id = ?').get(Number(userId));
+      const updatedUser = db.prepare('SELECT id, login, role, verified, created_at FROM users WHERE id = ?').get(targetUserId);
       if (updatedUser) {
         fastify.broadcastAll({
           type: 'user_verification_changed',
@@ -268,22 +272,25 @@ module.exports = function (fastify) {
     preHandler: [fastify.requireAuth, fastify.requirePermission('manage_verification')],
   }, async (request, reply) => {
     const { userId } = request.body || {};
-    if (!userId) return reply.code(400).send({ error: 'userId required' });
-    const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(Number(userId));
+    const targetUserId = Number(userId);
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+      return reply.code(400).send({ error: 'userId required' });
+    }
+    const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(targetUserId);
     if (!target) return reply.code(404).send({ error: 'User not found' });
     if (target.role === 'owner') return reply.code(403).send({ error: 'Cannot reject owner' });
     
     try {
-      deleteUserData(db, Number(userId), fastify.log);
+      deleteUserData(db, targetUserId, fastify.log);
     } catch (error) {
-      fastify.log.error(`Failed to reject user ${userId}:`, error);
+      fastify.log.error(`Failed to reject user ${targetUserId}:`, error);
       return reply.code(500).send({ error: 'Failed to reject user' });
     }
 
     // Broadcast user rejection to the user
-    fastify.broadcastToUser(Number(userId), {
+    fastify.broadcastToUser(targetUserId, {
       type: 'user_rejected',
-      userId: Number(userId),
+      userId: targetUserId,
       message: 'Your account has been rejected by an administrator.'
     });
 
@@ -291,7 +298,7 @@ module.exports = function (fastify) {
     if (fastify.broadcastAll) {
       fastify.broadcastAll({
         type: 'user_deleted_admin',
-        userId: Number(userId)
+        userId: targetUserId
       });
     }
 
@@ -330,7 +337,7 @@ module.exports = function (fastify) {
 
     cleanupExpiredCodes(db);
 
-    const codeHash = hashCode(rawCode);
+    const codeHash = hashCode(db, rawCode);
     const expiresAtValue = expiresAt || new Date(now.getTime() + 24*60*60*1000).toISOString();
 
     let result;
@@ -427,7 +434,7 @@ module.exports = function (fastify) {
       .prepare(
         'SELECT id, expires_at FROM verification_codes WHERE code_hash = ? AND used = 0'
       )
-      .get(hashCode(codeValue));
+      .get(hashCode(db, codeValue));
 
     if (!matchedCode) {
       return rejectAttempt('Invalid or expired code');
@@ -493,9 +500,12 @@ module.exports = function (fastify) {
     }
 
     const { id } = request.params || {};
-    if (!id) return reply.code(400).send({ error: 'id required' });
+    const codeId = Number(id);
+    if (!Number.isInteger(codeId) || codeId <= 0) {
+      return reply.code(400).send({ error: 'id required' });
+    }
 
-    const result = db.prepare('DELETE FROM verification_codes WHERE id = ?').run(Number(id));
+    const result = db.prepare('DELETE FROM verification_codes WHERE id = ?').run(codeId);
     if (result.changes === 0) return reply.code(404).send({ error: 'Code not found' });
 
     // Реалтайм: список кодов изменился
@@ -517,19 +527,22 @@ module.exports = function (fastify) {
 
     const { id } = request.params || {};
     const { expiresAt } = request.body || {};
+    const codeId = Number(id);
     
-    if (!id) return reply.code(400).send({ error: 'id required' });
+    if (!Number.isInteger(codeId) || codeId <= 0) {
+      return reply.code(400).send({ error: 'id required' });
+    }
     if (typeof expiresAt !== 'string' || Number.isNaN(Date.parse(expiresAt))) {
       return reply.code(400).send({ error: 'New expiration date (expiresAt) required' });
     }
 
     // Проверяем, существует ли код
-    const code = db.prepare('SELECT * FROM verification_codes WHERE id = ?').get(Number(id));
+    const code = db.prepare('SELECT * FROM verification_codes WHERE id = ?').get(codeId);
     if (!code) return reply.code(404).send({ error: 'Code not found' });
     
     // Обновляем срок действия
     const result = db.prepare('UPDATE verification_codes SET expires_at = ? WHERE id = ?')
-      .run(expiresAt, Number(id));
+      .run(expiresAt, codeId);
       
     if (result.changes === 0) return reply.code(404).send({ error: 'Failed to update code' });
 
@@ -538,7 +551,7 @@ module.exports = function (fastify) {
       fastify.broadcastVerificationCodesChanged();
     }
 
-    return { ok: true, id: Number(id), expires_at: expiresAt };
+    return { ok: true, id: codeId, expires_at: expiresAt };
   });
 
 };

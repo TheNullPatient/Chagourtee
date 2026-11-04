@@ -1,4 +1,6 @@
-const { hashPassword, verifyPassword } = require('./auth');
+const { hashPassword, verifyPassword, validatePassword } = require('./auth');
+
+const CURRENT_PASSWORD_MAX_LENGTH = 1024;
 
 module.exports = function (fastify) {
   const db = fastify.db;
@@ -7,17 +9,41 @@ module.exports = function (fastify) {
     preHandler: [fastify.requireAuth],
   }, async (request, reply) => {
     const { currentPassword, newPassword } = request.body || {};
-    if (!currentPassword || !newPassword) {
+
+    if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
       return reply.code(400).send({ error: 'Current and new password required' });
     }
-    if (String(newPassword).length < 6) {
-      return reply.code(400).send({ error: 'New password too short' });
+    if (currentPassword.length === 0 || currentPassword.length > CURRENT_PASSWORD_MAX_LENGTH) {
+      return reply.code(400).send({ error: 'Current and new password required' });
     }
+
+    const passwordCheck = validatePassword(newPassword);
+    if (!passwordCheck.ok) {
+      return reply.code(400).send({ error: passwordCheck.error });
+    }
+
     const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(request.session.userId);
     if (!user || !verifyPassword(currentPassword, user.password_hash)) {
       return reply.code(401).send({ error: 'Current password is wrong' });
     }
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
+
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
+      hashPassword(newPassword),
+      user.id
+    );
+
+    // A password change must invalidate sessions that may have been stolen.
+    // The session that performed the change stays usable so the user is not
+    // kicked out of the screen they are already looking at.
+    if (request.session?.sessionId) {
+      db.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').run(
+        user.id,
+        request.session.sessionId
+      );
+    } else {
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+    }
+
     return { ok: true };
   });
 
@@ -25,10 +51,15 @@ module.exports = function (fastify) {
     preHandler: [fastify.requireAuth],
   }, async (request, reply) => {
     const { password, newLogin } = request.body || {};
-    if (!password || !newLogin) {
+
+    if (typeof password !== 'string' || typeof newLogin !== 'string') {
       return reply.code(400).send({ error: 'Password and new login required' });
     }
-    const newLoginTrim = String(newLogin).trim();
+    if (password.length === 0 || password.length > CURRENT_PASSWORD_MAX_LENGTH) {
+      return reply.code(400).send({ error: 'Password and new login required' });
+    }
+
+    const newLoginTrim = newLogin.trim();
     
     // Validate new login format: only alphanumeric characters, length between 2 and 32
     if (!/^[a-zA-Z0-9]{2,32}$/.test(newLoginTrim)) {

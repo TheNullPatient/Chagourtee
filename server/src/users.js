@@ -106,7 +106,18 @@ module.exports = function (fastify) {
     preHandler: [fastify.requireAuth, fastify.requirePermission('manage_users')],
   }, async (request, reply) => {
     const userId = Number(request.params.id);
-    const reason = request.body?.reason || 'Account removed by administrator';
+    const rawReason = request.body?.reason;
+    let reason = 'Account removed by administrator';
+    if (rawReason !== undefined && rawReason !== null) {
+      if (typeof rawReason !== 'string') {
+        return reply.code(400).send({ error: 'Reason must be a string' });
+      }
+      const trimmedReason = rawReason.trim();
+      if (trimmedReason.length > 500) {
+        return reply.code(400).send({ error: 'Reason must not exceed 500 characters' });
+      }
+      if (trimmedReason.length > 0) reason = trimmedReason;
+    }
     const target = db.prepare('SELECT id, role, login FROM users WHERE id = ?').get(userId);
     if (!target) return reply.code(404).send({ error: 'User not found' });
     if (target.role === 'owner') {

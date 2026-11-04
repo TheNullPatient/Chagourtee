@@ -232,8 +232,9 @@ export default function Settings() {
                       type="password"
                       value={passNew}
                       onChange={(e) => setPassNew(e.target.value)}
-                      placeholder="Минимум 6 символов"
-                      minLength={6}
+                      placeholder="Минимум 8 символов"
+                      minLength={8}
+                      maxLength={72}
                       required
                     />
                   </div>

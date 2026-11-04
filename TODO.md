@@ -204,11 +204,27 @@ The v0.4.0-alpha release will focus on enhancing file handling capabilities, red
 2. Full Cloudflare Tunnel integration
 
 ## Security Considerations
-- [ ] Ensure all new features follow security best practices
-- [ ] Review authentication/authorization for new API endpoints
-- [ ] Validate all user inputs to prevent injection attacks
-- [ ] Ensure proper encryption for file uploads and storage
-- [ ] Secure WebSocket connections with proper authentication
+- [x] Ensure all new features follow security best practices — ✅ Done (pre-v0.4.0-alpha pass)
+- [x] Review authentication/authorization for new API endpoints — ✅ Done
+  - Granular moderator permissions, owner-implicit access, session revocation on password change
+  - Removed the destructive `/debug/drop-table/:tableName` route
+- [x] Validate all user inputs to prevent injection attacks — ✅ Done
+  - Caps for message body, media attachments, batch delete, room members, invites, verification IDs
+  - Unified password policy: minimum 8 characters, maximum 72 bytes (bcrypt limit)
+- [x] Ensure proper encryption for file uploads and storage — ✅ Done
+  - AES-256-GCM at rest; media download now enforces room access and orphan uploader ownership
+  - Unsafe MIME types (HTML/SVG/XML/…) are served as `application/octet-stream` attachments with `nosniff` and sandbox CSP
+- [x] Secure WebSocket connections with proper authentication — ✅ Done
+  - Socket authentication, room access checks on join, forged events rejected
+- [x] Add rate limiting for authentication and registration — ✅ Done
+  - 10 failed logins per login / 30 per IP per 15 minutes; 60 registrations per IP per hour
+- [x] Remove hard-coded fallback secrets — ✅ Done
+  - Session and verification-code secrets fall back to a generated per-installation value stored in `server_secrets`
+
+### Known Remaining Risks
+- Rate limiting is in-memory and per-process; multi-instance deployments should use a shared store.
+- `CHAGOURTEE_TRUST_PROXY=true` must only be enabled behind a trusted reverse proxy, otherwise clients can spoof `X-Forwarded-For` and evade IP throttling.
+- Media integrity relies on the `CHAGOURTEE_MEDIA_ENCRYPTION_KEY`; losing it makes existing files unrecoverable.
 
 ## Identified Styling Issues (Client-Side) — Audit Report
 

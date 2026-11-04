@@ -90,8 +90,9 @@ export default function Register() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="new-password"
-                minLength={6}
-                placeholder="Минимум 6 символов"
+                minLength={8}
+                maxLength={72}
+                placeholder="Минимум 8 символов"
                 required
               />
             </div>

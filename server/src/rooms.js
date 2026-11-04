@@ -537,27 +537,4 @@ module.exports = function (fastify) {
     
     return { ok: true, message: `Cleared ${r.changes} messages from room` };
   });
-  
-  // Debug endpoint to drop tables (only available in development)
-  if (process.env.NODE_ENV === 'development' || process.env.DEBUG_MODE === 'true') {
-    fastify.delete('/debug/drop-table/:tableName', {
-      preHandler: [fastify.requireAuth, fastify.requireOwner],
-    }, async (request, reply) => {
-      const tableName = request.params.tableName;
-      
-      // Validate table name to prevent SQL injection
-      const validTables = ['rooms', 'messages', 'users', 'sessions', 'invites', 'verification_codes', 'verification_settings'];
-      if (!validTables.includes(tableName)) {
-        return reply.code(400).send({ error: 'Invalid table name' });
-      }
-      
-      try {
-        // Note: We're using raw SQL with a whitelist, which is safe
-        db.prepare(`DROP TABLE IF EXISTS ${tableName}`).run();
-        return { ok: true, message: `Table ${tableName} dropped` };
-      } catch (error) {
-        return reply.code(500).send({ error: error.message });
-      }
-    });
-  }
 };

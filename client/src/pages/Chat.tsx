@@ -13,6 +13,7 @@ import {
   leaveRoom
 } from '../websocket'; // Import WebSocket manager
 import { logger } from '../utils/logger'; // Import our logger
+import { isInlineImageMime } from '../utils/media';
 // Import the custom hook
 import { useMessageInputBehavior } from '../hooks/useMessageInputBehavior';
 import MarkdownMessage from '../components/MarkdownMessage'; // Import MarkdownMessage component
@@ -3124,7 +3125,7 @@ export default function Chat() {
                         {editingMessage.media && editingMessage.media.length > 0 && editingMessage.media.map((mediaFile) => {
                           // Determine file type and show appropriate preview
                           let previewElement;
-                          if (mediaFile.mime_type.startsWith('image/')) {
+                          if (isInlineImageMime(mediaFile.mime_type)) {
                             // For images, show a thumbnail
                             previewElement = (
                               <div className="file-preview">

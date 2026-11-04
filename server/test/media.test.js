@@ -58,9 +58,9 @@ test('media uploads, downloads and quotas', async () => {
     ).run(maxFileSize, maxStorageSize, cleanupStrategy);
   }
 
-  async function upload(baseUrl, name, bytes) {
+  async function upload(baseUrl, name, bytes, type) {
     const form = new FormData();
-    form.append('file', new Blob([bytes]), name);
+    form.append('file', new Blob([bytes], type ? { type } : undefined), name);
     const response = await fetch(`${baseUrl}/api/upload`, {
       method: 'POST',
       headers: { 'x-test-user': String(ownerId) },
@@ -75,8 +75,8 @@ test('media uploads, downloads and quotas', async () => {
     return { status: response.status, body };
   }
 
-  async function getMedia(baseUrl, filename, range) {
-    const headers = { 'x-test-user': String(ownerId) };
+  async function getMedia(baseUrl, filename, range, userId = ownerId) {
+    const headers = { 'x-test-user': String(userId) };
     if (range) headers.range = range;
     const response = await fetch(`${baseUrl}/api/media/${filename}`, { headers });
     return {
@@ -329,6 +329,142 @@ test('media uploads, downloads and quotas', async () => {
       body: JSON.stringify({ hello: 'world' }),
     });
     check('non-multipart upload returns 400', notMultipart.status === 400, `${notMultipart.status}`);
+
+    // --- Orphan media is private to its uploader ---------------------------
+    setSettings({ maxFileSize: -1, maxStorageSize: 0 });
+    const orphan = await upload(baseUrl, 'orphan.bin', Buffer.from('orphan bytes'));
+    check('orphan upload succeeds', orphan.status === 200, JSON.stringify(orphan.body));
+
+    const orphanAsMember = await getMedia(
+      baseUrl,
+      orphan.body.encrypted_filename,
+      undefined,
+      memberId
+    );
+    check(
+      'orphan media is hidden from other users',
+      orphanAsMember.status === 404,
+      `${orphanAsMember.status}`
+    );
+    const orphanAsOwner = await getMedia(baseUrl, orphan.body.encrypted_filename);
+    check(
+      'uploader can still read their own orphan media',
+      orphanAsOwner.status === 200 &&
+        Buffer.compare(orphanAsOwner.buffer, Buffer.from('orphan bytes')) === 0,
+      `${orphanAsOwner.status}`
+    );
+
+    // --- Media attached to a private room follows room access --------------
+    const privateMedia = await upload(baseUrl, 'private.bin', Buffer.from('private bytes'));
+    const privateRoomId = Number(
+      db
+        .prepare(
+          "INSERT INTO rooms (name, created_by, access_level) VALUES (?, ?, 'private')"
+        )
+        .run(`media_private_${Date.now()}`, ownerId).lastInsertRowid
+    );
+    const privateMessageId = Number(
+      db
+        .prepare("INSERT INTO messages (room_id, user_id, body) VALUES (?, ?, 'private media')")
+        .run(privateRoomId, ownerId).lastInsertRowid
+    );
+    db.prepare('UPDATE media_files SET message_id = ? WHERE id = ?').run(
+      privateMessageId,
+      privateMedia.body.id
+    );
+
+    const privateAsOutsider = await getMedia(
+      baseUrl,
+      privateMedia.body.encrypted_filename,
+      undefined,
+      memberId
+    );
+    check(
+      'private room media is hidden from non-members',
+      privateAsOutsider.status === 404,
+      `${privateAsOutsider.status}`
+    );
+
+    const privateAsOwner = await getMedia(baseUrl, privateMedia.body.encrypted_filename);
+    check(
+      'owner can read media in their private room',
+      privateAsOwner.status === 200,
+      `${privateAsOwner.status}`
+    );
+
+    db.prepare('INSERT INTO room_members (room_id, user_id) VALUES (?, ?)').run(
+      privateRoomId,
+      memberId
+    );
+    const privateAsMember = await getMedia(
+      baseUrl,
+      privateMedia.body.encrypted_filename,
+      undefined,
+      memberId
+    );
+    check(
+      'private room member can read room media',
+      privateAsMember.status === 200 &&
+        Buffer.compare(privateAsMember.buffer, Buffer.from('private bytes')) === 0,
+      `${privateAsMember.status}`
+    );
+
+    // --- Unsafe MIME types are forced to download --------------------------
+    const htmlUpload = await upload(
+      baseUrl,
+      'evil.html',
+      Buffer.from('<script>alert(1)</script>'),
+      'text/html'
+    );
+    const htmlResponse = await getMedia(baseUrl, htmlUpload.body.encrypted_filename);
+    check(
+      'HTML media is served as an octet stream',
+      htmlResponse.status === 200 &&
+        htmlResponse.headers.get('content-type')?.startsWith('application/octet-stream'),
+      htmlResponse.headers.get('content-type')
+    );
+    check(
+      'HTML media is marked as an attachment',
+      htmlResponse.headers.get('content-disposition')?.startsWith('attachment'),
+      htmlResponse.headers.get('content-disposition')
+    );
+    check(
+      'media responses deny MIME sniffing',
+      htmlResponse.headers.get('x-content-type-options') === 'nosniff'
+    );
+    check(
+      'media responses are sandboxed',
+      htmlResponse.headers.get('content-security-policy')?.includes('sandbox'),
+      htmlResponse.headers.get('content-security-policy')
+    );
+
+    const svgUpload = await upload(
+      baseUrl,
+      'evil.svg',
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
+      'image/svg+xml'
+    );
+    const svgResponse = await getMedia(baseUrl, svgUpload.body.encrypted_filename);
+    check(
+      'SVG media is not served as an inline image',
+      svgResponse.headers.get('content-type')?.startsWith('application/octet-stream') &&
+        svgResponse.headers.get('content-disposition')?.startsWith('attachment'),
+      `${svgResponse.headers.get('content-type')} / ${svgResponse.headers.get('content-disposition')}`
+    );
+
+    const pngUpload = await upload(
+      baseUrl,
+      'pixel.png',
+      Buffer.from('89504e470d0a1a0a', 'hex'),
+      'image/png'
+    );
+    const pngResponse = await getMedia(baseUrl, pngUpload.body.encrypted_filename);
+    check(
+      'safe images keep their type and inline disposition',
+      pngResponse.headers.get('content-type')?.startsWith('image/png') &&
+        pngResponse.headers.get('content-disposition')?.startsWith('inline'),
+      `${pngResponse.headers.get('content-type')} / ${pngResponse.headers.get('content-disposition')}`
+    );
 
     // --- Bounded memory ----------------------------------------------------
     setSettings({ maxFileSize: -1, maxStorageSize: 0 });

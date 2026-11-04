@@ -151,6 +151,12 @@ function createDb(dbPath) {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS server_secrets (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS media_storage_settings (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       max_file_size INTEGER,
